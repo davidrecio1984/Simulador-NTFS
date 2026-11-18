@@ -7,7 +7,7 @@ import {
 } from '../types/ntfs';
 import {
   computeEffectivePermissions,
-  computeLocalEffectivePermissions,
+  findApplicableShareFolder,
 } from '../utils/ntfsEngine';
 
 const RX_PERMS = [
@@ -128,10 +128,48 @@ function buildEvaluation(issues: EvaluationIssue[], maxScore: number): ScenarioE
     score,
     maxScore,
     summary: passed
-      ? 'Configuración NTFS válida: todos los requisitos de objeto y permisos especiales se cumplen.'
-      : `Faltan ${errors.length} ${errors.length === 1 ? 'ajuste' : 'ajustes'} para cumplir exactamente el enunciado.`,
+      ? 'Configuración de Red + NTFS válida: el acceso desde otro equipo cumple todos los requisitos.'
+      : `Faltan ${errors.length} ${errors.length === 1 ? 'ajuste' : 'ajustes'} entre permisos de Red y NTFS para cumplir el enunciado.`,
     issues,
   };
+}
+
+export function verifyNetworkShareAvailable(
+  folderId: string,
+  principalId: string,
+  folders: VirtualFolderNode[],
+  principals: VirtualPrincipal[],
+  issues: EvaluationIssue[],
+  principalLabel: string
+): boolean {
+  const shareFolder = findApplicableShareFolder(folderId, folders);
+  if (!shareFolder || !shareFolder.share) {
+    issues.push({
+      severity: 'error',
+      title: 'Carpeta no compartida en red',
+      detail: `Los usuarios se conectan desde otro equipo: comparte esta carpeta o su carpeta padre en «Compartir (Red)» y concede permiso de red a ${principalLabel}.`,
+    });
+    return false;
+  }
+
+  const net = computeEffectivePermissions(
+    folderId,
+    principalId,
+    'thisFolder',
+    'network',
+    folders,
+    principals
+  );
+  if (!net.share || net.share.size === 0) {
+    issues.push({
+      severity: 'error',
+      title: `Sin permisos en red para ${principalLabel}`,
+      detail: `La carpeta está compartida como \\\\${shareFolder.share.shareName}, pero ${principalLabel} no tiene permiso en la pestaña «Compartir (Red)».`,
+    });
+    return false;
+  }
+
+  return true;
 }
 
 export const NTFS_SCENARIOS: NtfsScenario[] = [
@@ -147,13 +185,13 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     targetFolderId: 'entrega_ex',
     targetPrincipalId: 'alumnos',
     testAccessMode: 'network',
-    focusTab: 'entry',
+    focusTab: 'share',
     enunciado:
-      'En C:\\SOR\\Entrega_Examenes, configura los permisos para el grupo Alumnos de modo que puedan entregar su examen (arrastrando o pegando el archivo dentro de la carpeta), pero NO puedan abrir/listar la carpeta para ver quién ha entregado ni leer, modificar o eliminar exámenes previos.',
+      'Los «Alumnos» se conectan desde sus equipos a través de la red a C:\\SOR\\Entrega_Examenes. Configura el recurso compartido (en C:\\SOR o en Entrega_Examenes) y los permisos NTFS para que puedan entregar su examen (arrastrando o pegando el archivo), pero NO puedan abrir la carpeta para listar ni leer, modificar o eliminar entregas de otros compañeros.',
     contextNote:
-      'La carpeta padre C:\\SOR está compartida en red con permiso Cambiar y Leer para Alumnos, y tiene la herencia deshabilitada en Entrega_Examenes.',
+      'Al conectarse por red, recuerda activar «Compartir esta carpeta» con permiso «Cambiar» y «Leer» para Alumnos, y configurar los permisos especiales NTFS en Entrega_Examenes.',
     hint:
-      'Crear archivos es un permiso de carpeta («Solo esta carpeta»). Marca «Crear archivos / escribir datos» y «Permisos de lectura» (y opcionalmente Atravesar carpeta), pero NO marques «Mostrar carpeta / leer datos».',
+      '1) En C:\\SOR (o en Entrega_Examenes) activa «Compartir (Red)» y da a Alumnos «Cambiar» + «Leer». 2) En NTFS de Entrega_Examenes añade a Alumnos con ámbito «Solo esta carpeta» y «Crear archivos / escribir datos» + «Permisos de lectura», SIN «Mostrar carpeta / leer datos».',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'EQUIPO_PROFESOR\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -175,12 +213,11 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
           { id: '1-alu', principalId: 'alumnos', type: 'allow', scope: 'this_folder_only', permissions: [...RX_PERMS], inheritedFrom: null },
         ],
         share: {
-          shared: true,
+          shared: false,
           shareName: 'SOR',
           hidden: false,
           entries: [
             { id: '1-sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
-            { id: '1-sh-alu', principalId: 'alumnos', allow: ['read', 'change'], deny: [] },
           ],
         },
         sampleFiles: [],
@@ -203,27 +240,31 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     ],
     checkSolution: (folders, principals) => {
       const issues: EvaluationIssue[] = [];
-      const onFolder = computeEffectivePermissions('entrega_ex', 'alumnos', 'thisFolder', 'network', folders, principals).effective;
-      const onFiles = computeEffectivePermissions('entrega_ex', 'alumnos', 'files', 'network', folders, principals).effective;
-      const onSubfolders = computeEffectivePermissions('entrega_ex', 'alumnos', 'subfolders', 'network', folders, principals).effective;
+      const hasShare = verifyNetworkShareAvailable('entrega_ex', 'alumnos', folders, principals, issues, 'Alumnos');
 
-      if (onFolder.has('createFilesWriteData')) {
+      const netFolder = computeEffectivePermissions('entrega_ex', 'alumnos', 'thisFolder', 'network', folders, principals);
+      const netFiles = computeEffectivePermissions('entrega_ex', 'alumnos', 'files', 'network', folders, principals);
+      const netSub = computeEffectivePermissions('entrega_ex', 'alumnos', 'subfolders', 'network', folders, principals);
+
+      if (netFolder.effective.has('createFilesWriteData')) {
         issues.push({
           severity: 'success',
-          title: 'Creación de archivos habilitada en la carpeta',
-          detail: 'Alumnos tiene «Crear archivos / escribir datos» sobre Esta carpeta, por lo que puede depositar su examen.',
+          title: 'Entrega por red habilitada',
+          detail: 'Alumnos tiene permiso en red («Cambiar») y NTFS («Crear archivos / escribir datos» en Solo esta carpeta), por lo que puede entregar su examen desde otro equipo.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
-          title: 'Falta permiso para crear el archivo de entrega',
-          detail: onFiles.has('createFilesWriteData')
-            ? 'Has aplicado «Crear archivos / escribir datos» a Archivos, pero crear archivos nuevos es un permiso de carpeta («Solo esta carpeta»).'
-            : 'Alumnos necesita «Crear archivos / escribir datos» aplicado a «Solo esta carpeta».',
+          title: 'No pueden crear el archivo de entrega desde red',
+          detail: netFolder.local.has('createFilesWriteData')
+            ? 'En NTFS local está bien, pero en «Compartir (Red)» falta marcar «Cambiar» para Alumnos (intersección Red ∩ NTFS).'
+            : netFiles.local.has('createFilesWriteData')
+              ? 'Has aplicado «Crear archivos / escribir datos» a Archivos, pero crear archivos nuevos es un permiso de carpeta («Solo esta carpeta»).'
+              : 'Alumnos necesita «Crear archivos / escribir datos» aplicado a «Solo esta carpeta» en NTFS y «Cambiar» en Red.',
         });
       }
 
-      if (!onFolder.has('listRead') && !onFiles.has('listRead')) {
+      if (!netFolder.effective.has('listRead') && !netFiles.effective.has('listRead') && !netFolder.local.has('listRead')) {
         issues.push({
           severity: 'success',
           title: 'Entrega ciega protegida',
@@ -233,26 +274,24 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         issues.push({
           severity: 'error',
           title: 'Los alumnos pueden ver o leer entregas ajenas',
-          detail: 'Debes quitar «Mostrar carpeta / leer datos» para impedir que entren a listar el contenido o leer archivos entregados.',
+          detail: 'Debes quitar «Mostrar carpeta / leer datos» en NTFS para impedir que entren a listar o leer archivos entregados.',
         });
       }
 
-      if (onFiles.has('createFilesWriteData') || onFiles.has('delete') || onFolder.has('deleteSubfoldersAndFiles') || onFolder.has('delete')) {
+      if (netFiles.local.has('createFilesWriteData') || netFiles.local.has('delete') || netFolder.local.has('deleteSubfoldersAndFiles') || netFolder.local.has('delete')) {
         issues.push({
           severity: 'error',
           title: 'Permiso excesivo de modificación o borrado',
-          detail: 'El ámbito debe ser «Solo esta carpeta» (no «Esta carpeta y archivos» ni «Esta carpeta, subcarpetas y archivos») y sin permisos de eliminación.',
+          detail: 'El ámbito debe ser «Solo esta carpeta» y sin permisos de eliminación.',
         });
       }
 
-      if (onSubfolders.size > 0 || onFiles.size > 0) {
-        if (!issues.some((i) => i.severity === 'error')) {
-          issues.push({
-            severity: 'warning',
-            title: 'Ámbito más amplio de lo necesario',
-            detail: 'Conviene limitar la entrada a «Solo esta carpeta» para no propagar permisos a archivos o subcarpetas.',
-          });
-        }
+      if ((netSub.local.size > 0 || netFiles.local.size > 0) && !issues.some((i) => i.severity === 'error')) {
+        issues.push({
+          severity: 'warning',
+          title: 'Ámbito más amplio de lo necesario',
+          detail: 'Conviene limitar la entrada a «Solo esta carpeta».',
+        });
       }
 
       return buildEvaluation(issues, 100);
@@ -270,14 +309,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     machineName: 'EQUIPO_PROFESOR',
     targetFolderId: 'enunciado_ex',
     targetPrincipalId: 'profesor',
-    testAccessMode: 'local',
-    focusTab: 'entry',
+    testAccessMode: 'network',
+    focusTab: 'share',
     enunciado:
-      'En C:\\SOR\\Enunciado_Examenes el profesor no debe guardar historial en subcarpetas, solo el examen actual. Configura los permisos de Profesor en UNA sola entrada para que pueda ver el contenido, crear, modificar y eliminar archivos, pero NO pueda crear subcarpetas ni eliminar la propia carpeta Enunciado_Examenes.',
+      'El usuario «Profesor» gestionará C:\\SOR\\Enunciado_Examenes conectándose desde otro equipo por red. Comparte el recurso en red para Profesor y configura UNA entrada NTFS en Enunciado_Examenes para que pueda ver el contenido, crear, modificar y eliminar archivos, pero NO pueda crear subcarpetas ni eliminar la propia carpeta Enunciado_Examenes.',
     contextNote:
-      'La herencia ya está deshabilitada y Alumnos tiene Lectura y ejecución en «Esta carpeta y archivos». Falta configurar al usuario Profesor.',
+      'La herencia ya está deshabilitada en Enunciado_Examenes y Alumnos ya tiene lectura. Recuerda compartir la carpeta padre C:\\SOR (o Enunciado_Examenes) con permiso en red «Cambiar».',
     hint:
-      'Usa el ámbito «Esta carpeta y archivos». Marca lectura, «Crear archivos / escribir datos», escribir atributos y «Eliminar subcarpetas y archivos», pero deja sin marcar «Crear carpetas / anexar datos» y «Eliminar».',
+      '1) En Compartir (Red) de C:\\SOR (o Enunciado_Examenes) añade a Profesor con «Cambiar» y «Leer». 2) En NTFS de Enunciado_Examenes usa «Esta carpeta y archivos» con lectura, «Crear archivos / escribir datos», escribir atributos y «Eliminar subcarpetas y archivos», sin «Crear carpetas» ni «Eliminar».',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'EQUIPO_PROFESOR\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -296,6 +335,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
           { id: '2-adm', principalId: 'admin', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '2-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
         ],
+        share: {
+          shared: false,
+          shareName: 'SOR',
+          hidden: false,
+          entries: [
+            { id: '2-sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
+          ],
+        },
         sampleFiles: [],
         sampleSubfolders: ['Enunciado_Examenes'],
       },
@@ -317,73 +364,77 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     ],
     checkSolution: (folders, principals) => {
       const issues: EvaluationIssue[] = [];
-      const onFolder = computeLocalEffectivePermissions('enunciado_ex', 'profesor', 'thisFolder', folders, principals);
-      const onFiles = computeLocalEffectivePermissions('enunciado_ex', 'profesor', 'files', folders, principals);
-      const onSubfolders = computeLocalEffectivePermissions('enunciado_ex', 'profesor', 'subfolders', folders, principals);
+      const hasShare = verifyNetworkShareAvailable('enunciado_ex', 'profesor', folders, principals, issues, 'Profesor');
 
-      if (onFolder.has('listRead') && onFolder.has('traverse') && onFiles.has('listRead')) {
+      const onFolder = computeEffectivePermissions('enunciado_ex', 'profesor', 'thisFolder', 'network', folders, principals);
+      const onFiles = computeEffectivePermissions('enunciado_ex', 'profesor', 'files', 'network', folders, principals);
+      const onSubfolders = computeEffectivePermissions('enunciado_ex', 'profesor', 'subfolders', 'network', folders, principals);
+
+      if (onFolder.effective.has('listRead') && onFolder.effective.has('traverse') && onFiles.effective.has('listRead')) {
         issues.push({
           severity: 'success',
-          title: 'Lectura de carpeta y archivos correcta',
-          detail: 'Profesor puede listar la carpeta y leer los archivos de enunciados.',
+          title: 'Lectura de carpeta y archivos por red correcta',
+          detail: 'Profesor puede listar la carpeta y leer los archivos de enunciados desde otro equipo.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
           title: 'Faltan permisos de lectura en carpeta y archivos',
-          detail: 'Debe tener «Atravesar carpeta / ejecutar archivo» y «Mostrar carpeta / leer datos» en «Esta carpeta y archivos».',
+          detail: 'Debe tener «Atravesar carpeta / ejecutar archivo» y «Mostrar carpeta / leer datos» en «Esta carpeta y archivos» y permiso de red «Leer».',
         });
       }
 
-      if (onFolder.has('createFilesWriteData') && onFiles.has('createFilesWriteData')) {
+      if (onFolder.effective.has('createFilesWriteData') && onFiles.effective.has('createFilesWriteData')) {
         issues.push({
           severity: 'success',
-          title: 'Creación y modificación de archivos activa',
-          detail: 'Con «Crear archivos / escribir datos» en «Esta carpeta y archivos», puede crear archivos nuevos y editar los existentes.',
+          title: 'Creación y modificación de archivos por red activa',
+          detail: 'Puede crear archivos nuevos y editar los existentes remotamente.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
-          title: 'Falta permiso para crear y modificar archivos',
-          detail: 'Aplica «Crear archivos / escribir datos» al ámbito «Esta carpeta y archivos».',
+          title: 'No puede crear o modificar archivos por red',
+          detail: onFolder.local.has('createFilesWriteData') && onFiles.local.has('createFilesWriteData')
+            ? 'Los permisos locales NTFS están bien, pero en «Compartir (Red)» falta marcar «Cambiar» para Profesor.'
+            : 'Aplica «Crear archivos / escribir datos» al ámbito «Esta carpeta y archivos» y «Cambiar» en Red.',
         });
       }
 
-      if (!onFolder.has('createFoldersAppendData')) {
+      if (!onFolder.local.has('createFoldersAppendData')) {
         issues.push({
           severity: 'success',
           title: 'Creación de subcarpetas bloqueada',
-          detail: '«Crear carpetas / anexar datos» está desmarcado para evitar que cree subcarpetas de historial.',
+          detail: '«Crear carpetas / anexar datos» está desmarcado para evitar subcarpetas de historial.',
         });
       } else {
         issues.push({
           severity: 'error',
           title: 'El profesor aún puede crear subcarpetas',
-          detail: 'Desmarca «Crear carpetas / anexar datos» para impedir subcarpetas.',
+          detail: 'Desmarca «Crear carpetas / anexar datos» en NTFS.',
         });
       }
 
-      if ((onFolder.has('deleteSubfoldersAndFiles') || onFiles.has('delete')) && !onFolder.has('delete')) {
+      if ((onFolder.effective.has('deleteSubfoldersAndFiles') || onFiles.effective.has('delete')) && !onFolder.local.has('delete')) {
         issues.push({
           severity: 'success',
           title: 'Puede borrar archivos pero no la carpeta raíz',
-          detail: '«Eliminar subcarpetas y archivos» permite limpiar archivos antiguos mientras la carpeta Enunciado_Examenes queda protegida (sin «Eliminar»).',
+          detail: '«Eliminar subcarpetas y archivos» permite limpiar archivos mientras Enunciado_Examenes queda protegida.',
         });
-      } else if (onFolder.has('delete')) {
+      } else if (onFolder.local.has('delete')) {
         issues.push({
           severity: 'error',
           title: 'Podría borrar la propia carpeta Enunciado_Examenes',
-          detail: 'Quita el permiso «Eliminar» sobre la carpeta y usa en su lugar «Eliminar subcarpetas y archivos».',
+          detail: 'Quita «Eliminar» sobre la carpeta y usa en su lugar «Eliminar subcarpetas y archivos».',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
-          title: 'No puede eliminar archivos de enunciados antiguos',
-          detail: 'Marca «Eliminar subcarpetas y archivos» para que pueda borrar archivos dentro de Enunciado_Examenes.',
+          title: 'No puede eliminar archivos antiguos por red',
+          detail: 'Marca «Eliminar subcarpetas y archivos» en NTFS y «Cambiar» en Compartir (Red).',
         });
       }
 
-      if (onSubfolders.size > 0) {
+      if (onSubfolders.local.size > 0) {
         issues.push({
           severity: 'error',
           title: 'El ámbito incluye subcarpetas',
@@ -399,21 +450,21 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-raiz-proyectos',
     number: 3,
-    title: 'Aislar la carpeta raíz sin propagar a subcarpetas',
+    title: 'Aislar la carpeta raíz compartida sin propagar a subcarpetas',
     category: 'Herencia y aislamiento',
     difficulty: 'Básico',
     sourcePractice: 'Práctica Repositorio',
     machineName: 'REPOSITORIO',
     targetFolderId: 'proyectos',
     targetPrincipalId: 'proyectosenred',
-    testAccessMode: 'local',
-    focusTab: 'security',
+    testAccessMode: 'network',
+    focusTab: 'share',
     enunciado:
-      'En C:\\Proyectos cuelgan las carpetas Proy1, Proy2 y Proy3. Debes: 1) Deshabilitar la herencia (convirtiendo permisos heredados y eliminando a Usuarios y Usuarios autentificados), y 2) Dar permiso de Lectura y ejecución a «Proyectosenred» SOLO en la carpeta Proyectos, para que puedan ver las carpetas de proyecto pero NO entrar en proyectos ajenos por herencia.',
+      'Los usuarios de «Proyectosenred» accederán desde otro equipo a C:\\Proyectos (donde cuelgan Proy1, Proy2 y Proy3). Debes: 1) Compartir C:\\Proyectos en red para Proyectosenred, 2) Deshabilitar la herencia en NTFS y quitar a Usuarios y Usuarios autentificados, y 3) Dar Lectura y ejecución a Proyectosenred SOLO en la carpeta Proyectos, sin propagar lectura a Proy1.',
     contextNote:
-      'Este patrón evita que al entrar en C:\\Proyectos todos los usuarios hereden acceso de lectura hacia C:\\Proyectos\\Proy1, Proy2 y Proy3.',
+      'Así pueden entrar al recurso compartido \\\\REPOSITORIO\\Proyectos y ver qué carpetas existen, pero sin heredar acceso al contenido de los proyectos.',
     hint:
-      'Ve a «Seguridad avanzada», pulsa «Deshabilitar herencia» -> Convertir, quita «Usuarios» y «Usuarios autentificados», y añade a «Proyectosenred» con Lectura y ejecución en «Solo esta carpeta».',
+      '1) En Compartir (Red) de C:\\Proyectos activa «Compartir esta carpeta» y añade a Proyectosenred (con Leer o Control total si luego habrá subcarpetas con edición). 2) En Seguridad avanzada deshabilita herencia (Convertir), quita Usuarios/Usuarios autentificados y añade a Proyectosenred con Lectura y ejecución en «Solo esta carpeta».',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'REPOSITORIO\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -447,6 +498,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         owner: 'REPOSITORIO\\Administradores',
         inheritanceEnabled: true,
         aces: [],
+        share: {
+          shared: false,
+          shareName: 'Proyectos',
+          hidden: false,
+          entries: [
+            { id: '3-sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
+          ],
+        },
         sampleFiles: [],
         sampleSubfolders: ['Proy1', 'Proy2', 'Proy3'],
       },
@@ -464,8 +523,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     ],
     checkSolution: (folders, principals) => {
       const issues: EvaluationIssue[] = [];
-      const proj = folders.find((f) => f.id === 'proyectos')!;
+      const hasShare = verifyNetworkShareAvailable('proyectos', 'proyectosenred', folders, principals, issues, 'Proyectosenred');
 
+      const proj = folders.find((f) => f.id === 'proyectos')!;
       if (!proj.inheritanceEnabled) {
         issues.push({
           severity: 'success',
@@ -491,28 +551,28 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         issues.push({
           severity: 'error',
           title: 'Quedan permisos para Usuarios o Usuarios autentificados',
-          detail: 'Elimina de la lista a «Usuarios» y «Usuarios autentificados» para impedir accesos no autorizados.',
+          detail: 'Elimina de la lista a «Usuarios» y «Usuarios autentificados».',
         });
       }
 
-      const onFolder = computeLocalEffectivePermissions('proyectos', 'proyectosenred', 'thisFolder', folders, principals);
-      const onProy1 = computeLocalEffectivePermissions('proy1', 'proyectosenred', 'thisFolder', folders, principals);
+      const onFolder = computeEffectivePermissions('proyectos', 'proyectosenred', 'thisFolder', 'network', folders, principals);
+      const onProy1 = computeEffectivePermissions('proy1', 'proyectosenred', 'thisFolder', 'network', folders, principals);
 
-      if (onFolder.has('listRead') && onFolder.has('traverse') && !onFolder.has('createFilesWriteData') && !onFolder.has('delete')) {
+      if (onFolder.effective.has('listRead') && onFolder.effective.has('traverse') && !onFolder.effective.has('createFilesWriteData') && !onFolder.effective.has('delete')) {
         issues.push({
           severity: 'success',
-          title: 'Lectura correcta en C:\\Proyectos',
-          detail: 'Proyectosenred puede entrar y ver la lista de carpetas de proyectos sin modificar la raíz.',
+          title: 'Lectura por red correcta en C:\\Proyectos',
+          detail: 'Proyectosenred puede entrar por red y ver la lista de carpetas de proyectos sin modificar la raíz.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
           title: 'Permisos incorrectos para Proyectosenred en C:\\Proyectos',
-          detail: 'Concede «Lectura y ejecución» (Atravesar, Mostrar, Leer atributos/extendidos, Permisos de lectura) sin escritura.',
+          detail: 'Concede «Lectura y ejecución» en NTFS sin escritura.',
         });
       }
 
-      if (!onProy1.has('listRead') && !onProy1.has('traverse')) {
+      if (!onProy1.effective.has('listRead') && !onProy1.effective.has('traverse') && !onProy1.local.has('listRead')) {
         issues.push({
           severity: 'success',
           title: 'Subcarpetas de proyecto aisladas',
@@ -534,21 +594,21 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-ejecutivos',
     number: 4,
-    title: 'Supervisión de Ejecutivos sobre proyectos presentes y futuros',
+    title: 'Supervisión remota de Ejecutivos sobre proyectos presentes y futuros',
     category: 'Herencia y aislamiento',
     difficulty: 'Básico',
     sourcePractice: 'Práctica Repositorio',
     machineName: 'REPOSITORIO',
     targetFolderId: 'proyectos',
     targetPrincipalId: 'ejecutivos',
-    testAccessMode: 'local',
-    focusTab: 'entry',
+    testAccessMode: 'network',
+    focusTab: 'share',
     enunciado:
-      'En C:\\Proyectos, el grupo «Ejecutivos» debe poder leer y ejecutar absolutamente todo el contenido de C:\\Proyectos y de cualquier subcarpeta o archivo actual o futuro, pero sin poder crear, editar ni borrar nada. Configúralo en C:\\Proyectos.',
+      'El grupo «Ejecutivos» se conecta desde sus portátiles en red a C:\\Proyectos. Configura los permisos de Red (en C:\\Proyectos) y NTFS para que puedan leer y ejecutar todo el contenido de C:\\Proyectos y de cualquier subcarpeta o archivo actual o futuro, pero sin poder crear, editar ni borrar nada.',
     contextNote:
-      'Al aplicar la entrada en la carpeta padre con propagación completa, las nuevas carpetas Proy4, Proy5... heredarán automáticamente este permiso de solo lectura.',
+      'En Compartir (Red) puedes asignar permiso a Ejecutivos (o a Proyectosenred si ejec1 pertenece a ambos), y los permisos NTFS filtrarán el acceso efectivo a solo lectura en toda la jerarquía.',
     hint:
-      'Añade a «Ejecutivos» con ámbito «Esta carpeta, subcarpetas y archivos» y permisos de Lectura y ejecución.',
+      '1) En Compartir (Red) de C:\\Proyectos habilita compartir y añade a Ejecutivos con «Leer» (o superior). 2) En NTFS añade a Ejecutivos con «Esta carpeta, subcarpetas y archivos» y Lectura y ejecución.',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'REPOSITORIO\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -569,6 +629,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
           { id: '4-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '4-pr', principalId: 'proyectosenred', type: 'allow', scope: 'this_folder_only', permissions: [...RX_PERMS], inheritedFrom: null },
         ],
+        share: {
+          shared: false,
+          shareName: 'Proyectos',
+          hidden: false,
+          entries: [
+            { id: '4-sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
+          ],
+        },
         sampleFiles: [],
         sampleSubfolders: ['Proy1', 'Proy2'],
       },
@@ -586,10 +654,12 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     ],
     checkSolution: (folders, principals) => {
       const issues: EvaluationIssue[] = [];
-      const f = computeLocalEffectivePermissions('proyectos', 'ejecutivos', 'thisFolder', folders, principals);
-      const s = computeLocalEffectivePermissions('proyectos', 'ejecutivos', 'subfolders', folders, principals);
-      const fi = computeLocalEffectivePermissions('proyectos', 'ejecutivos', 'files', folders, principals);
-      const p1f = computeLocalEffectivePermissions('proy1', 'ejecutivos', 'files', folders, principals);
+      const hasShare = verifyNetworkShareAvailable('proyectos', 'ejecutivos', folders, principals, issues, 'Ejecutivos');
+
+      const f = computeEffectivePermissions('proyectos', 'ejecutivos', 'thisFolder', 'network', folders, principals).effective;
+      const s = computeEffectivePermissions('proyectos', 'ejecutivos', 'subfolders', 'network', folders, principals).effective;
+      const fi = computeEffectivePermissions('proyectos', 'ejecutivos', 'files', 'network', folders, principals).effective;
+      const p1f = computeEffectivePermissions('proy1', 'ejecutivos', 'files', 'network', folders, principals).effective;
 
       const hasRx = (set: Set<string>) =>
         set.has('traverse') && set.has('listRead') && set.has('readAttributes') && set.has('readPermissions');
@@ -599,14 +669,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
       if (hasRx(f) && hasRx(s) && hasRx(fi) && hasRx(p1f)) {
         issues.push({
           severity: 'success',
-          title: 'Lectura y ejecución heredada en toda la jerarquía',
-          detail: 'Ejecutivos puede acceder y leer en C:\\Proyectos, subcarpetas y archivos actuales y futuros.',
+          title: 'Lectura y ejecución por red heredada en toda la jerarquía',
+          detail: 'Ejecutivos puede acceder por red y leer en C:\\Proyectos, subcarpetas y archivos actuales y futuros.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
           title: 'Falta propagación completa de lectura',
-          detail: 'Selecciona «Esta carpeta, subcarpetas y archivos» con permisos de Lectura y ejecución.',
+          detail: 'Selecciona «Esta carpeta, subcarpetas y archivos» con permisos de Lectura y ejecución en NTFS.',
         });
       }
 
@@ -620,7 +690,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         issues.push({
           severity: 'error',
           title: 'Permisos de escritura concedidos por error',
-          detail: 'Asegúrate de desmarcar permisos de creación, escritura o eliminación para Ejecutivos.',
+          detail: 'Desmarca permisos de creación, escritura o eliminación en NTFS para Ejecutivos.',
         });
       }
 
@@ -632,21 +702,21 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-modificar-sin-crear',
     number: 5,
-    title: 'Modificar archivos existentes sin crear nuevos ni borrar',
+    title: 'Modificar archivos existentes por red sin crear nuevos ni borrar',
     category: 'Permisos dobles',
     difficulty: 'Avanzado',
     sourcePractice: 'Práctica Repositorio (Permisos dobles)',
     machineName: 'REPOSITORIO',
     targetFolderId: 'proy1',
     targetPrincipalId: 'par1',
-    testAccessMode: 'local',
-    focusTab: 'entry',
+    testAccessMode: 'network',
+    focusTab: 'share',
     enunciado:
-      'En C:\\Proyectos\\Proy1, los participantes «Par1» deben poder entrar en Proy1 y sus subcarpetas y leer todo, y además poder MODIFICAR el contenido de los archivos ya existentes. Sin embargo, NO deben poder crear archivos nuevos, NO deben poder crear subcarpetas, y NO deben poder borrar ni archivos ni carpetas.',
+      'Los participantes «Par1» acceden desde otro equipo por red a C:\\Proyectos\\Proy1. Configura los permisos en Red (en C:\\Proyectos o Proy1) y los permisos NTFS en Proy1 para que puedan leer todo y MODIFICAR el contenido de los archivos existentes, pero NO puedan crear archivos nuevos, NO puedan crear subcarpetas y NO puedan borrar ni archivos ni carpetas.',
     contextNote:
-      'Este es el caso clásico de permisos dobles en NTFS: «Crear archivos / escribir datos» significa «Crear archivos» en carpetas, pero significa «Escribir/modificar datos» cuando se aplica a «Solo archivos».',
+      'En Red necesitan permiso «Cambiar» para poder guardar modificaciones en los archivos, mientras que NTFS filtra mediante dos entradas que no puedan crear ni borrar.',
     hint:
-      'Necesitas DOS entradas para Par1 en Proy1: 1) «Esta carpeta y subcarpetas» solo con Lectura y ejecución; 2) «Solo archivos» con Lectura + «Crear archivos / escribir datos» (+ «Crear carpetas / anexar datos» y escribir atributos), sin «Eliminar».',
+      '1) Comparte C:\\Proyectos (o Proy1) dando a Par1 permiso de red «Cambiar» + «Leer». 2) En NTFS de Proy1 crea 2 entradas para Par1: «Esta carpeta y subcarpetas» (Lectura y ejecución) y «Solo archivos» (Lectura + «Crear archivos / escribir datos» + «Crear carpetas / anexar datos» + escribir atributos, SIN «Eliminar»).',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'REPOSITORIO\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -667,6 +737,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
           { id: '5-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '5-ej', principalId: 'ejecutivos', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...RX_PERMS], inheritedFrom: null },
         ],
+        share: {
+          shared: false,
+          shareName: 'Proyectos',
+          hidden: false,
+          entries: [
+            { id: '5-sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
+          ],
+        },
         sampleFiles: [],
         sampleSubfolders: ['Proy1'],
       },
@@ -684,17 +762,19 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     ],
     checkSolution: (folders, principals) => {
       const issues: EvaluationIssue[] = [];
-      const onFolder = computeLocalEffectivePermissions('proy1', 'par1', 'thisFolder', folders, principals);
-      const onSubfolders = computeLocalEffectivePermissions('proy1', 'par1', 'subfolders', folders, principals);
-      const onFiles = computeLocalEffectivePermissions('proy1', 'par1', 'files', folders, principals);
+      const hasShare = verifyNetworkShareAvailable('proy1', 'par1', folders, principals, issues, 'Par1');
 
-      if (onFolder.has('listRead') && onFolder.has('traverse') && onSubfolders.has('listRead') && onFiles.has('listRead')) {
+      const onFolder = computeEffectivePermissions('proy1', 'par1', 'thisFolder', 'network', folders, principals);
+      const onSubfolders = computeEffectivePermissions('proy1', 'par1', 'subfolders', 'network', folders, principals);
+      const onFiles = computeEffectivePermissions('proy1', 'par1', 'files', 'network', folders, principals);
+
+      if (onFolder.effective.has('listRead') && onFolder.effective.has('traverse') && onSubfolders.effective.has('listRead') && onFiles.effective.has('listRead')) {
         issues.push({
           severity: 'success',
-          title: 'Lectura en carpeta, subcarpetas y archivos',
+          title: 'Lectura por red en carpeta, subcarpetas y archivos',
           detail: 'Par1 puede navegar por Proy1 y sus subcarpetas y abrir los archivos.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
           title: 'Faltan permisos de lectura en algún nivel',
@@ -702,25 +782,27 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         });
       }
 
-      if (onFiles.has('createFilesWriteData')) {
+      if (onFiles.effective.has('createFilesWriteData')) {
         issues.push({
           severity: 'success',
-          title: 'Modificación de archivos existentes habilitada',
-          detail: 'En «Solo archivos», «Crear archivos / escribir datos» permite editar y guardar archivos existentes.',
+          title: 'Modificación de archivos existentes por red habilitada',
+          detail: 'En Red («Cambiar») y en NTFS («Solo archivos» + «Crear archivos / escribir datos»), pueden guardar cambios en archivos existentes.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
-          title: 'No pueden modificar archivos existentes',
-          detail: 'Crea una entrada para Par1 aplicada a «Solo archivos» con «Crear archivos / escribir datos» marcado.',
+          title: 'No pueden modificar archivos existentes desde otro equipo',
+          detail: onFiles.local.has('createFilesWriteData')
+            ? 'En NTFS local está bien, pero en «Compartir (Red)» falta marcar «Cambiar» para Par1 (intersección Red ∩ NTFS).'
+            : 'Crea una entrada NTFS para Par1 aplicada a «Solo archivos» con «Crear archivos / escribir datos» y marca «Cambiar» en Red.',
         });
       }
 
-      if (!onFolder.has('createFilesWriteData') && !onSubfolders.has('createFilesWriteData') && !onFolder.has('createFoldersAppendData')) {
+      if (!onFolder.local.has('createFilesWriteData') && !onSubfolders.local.has('createFilesWriteData') && !onFolder.local.has('createFoldersAppendData')) {
         issues.push({
           severity: 'success',
           title: 'Creación de archivos y subcarpetas bloqueada',
-          detail: 'Al no marcar permisos de creación en «Esta carpeta y subcarpetas», no pueden crear elementos nuevos.',
+          detail: 'No pueden crear elementos nuevos.',
         });
       } else {
         issues.push({
@@ -730,7 +812,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         });
       }
 
-      if (!onFiles.has('delete') && !onFolder.has('delete') && !onFolder.has('deleteSubfoldersAndFiles')) {
+      if (!onFiles.local.has('delete') && !onFolder.local.has('delete') && !onFolder.local.has('deleteSubfoldersAndFiles')) {
         issues.push({
           severity: 'success',
           title: 'Eliminación bloqueada',
@@ -752,21 +834,21 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-director-sin-borrar-raiz',
     number: 6,
-    title: 'Administración total del contenido sin eliminar la carpeta padre',
+    title: 'Administración remota del contenido sin eliminar la carpeta padre',
     category: 'Protección de carpeta raíz',
     difficulty: 'Intermedio',
     sourcePractice: 'Práctica Repositorio / Aulas SOR',
     machineName: 'REPOSITORIO',
     targetFolderId: 'proy1',
     targetPrincipalId: 'dir1',
-    testAccessMode: 'local',
-    focusTab: 'entry',
+    testAccessMode: 'network',
+    focusTab: 'share',
     enunciado:
-      'En C:\\Proyectos\\Proy1, los directores «Dir1» deben tener prácticamente Control Total sobre todo lo que contiene Proy1 (crear y borrar subcarpetas, crear/modificar/borrar archivos, cambiar permisos y tomar posesión), pero NO deben poder eliminar ni renombrar la propia carpeta Proy1.',
+      'Los directores «Dir1» administran C:\\Proyectos\\Proy1 desde otro equipo en red. Deben poder crear y borrar subcarpetas y archivos, cambiar permisos NTFS y tomar posesión a través de la red, pero NO deben poder eliminar ni renombrar la propia carpeta Proy1.',
     contextNote:
-      'Si marcas «Control total», Windows activa automáticamente «Eliminar» sobre la carpeta actual. Para evitar que borren Proy1 pero sí su contenido, hay que usar un permiso Especial.',
+      'Ojo con el permiso de Red: «Cambiar» en Compartir NO permite cambiar permisos ni tomar posesión por red; necesitarán «Control total» en Red, mientras NTFS bloquea «Eliminar» sobre Proy1.',
     hint:
-      'Usa «Esta carpeta, subcarpetas y archivos» y marca todos los permisos avanzados EXCEPTO «Control total» y «Eliminar». («Eliminar subcarpetas y archivos» SÍ debe quedar marcado).',
+      '1) En Compartir (Red) de C:\\Proyectos (o Proy1) asigna a Dir1 «Control total». 2) En NTFS de Proy1 usa «Esta carpeta, subcarpetas y archivos» marcando los 12 permisos especiales EXCEPTO «Control total» y «Eliminar».',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'REPOSITORIO\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -785,6 +867,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
           { id: '6-adm', principalId: 'admin', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '6-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
         ],
+        share: {
+          shared: false,
+          shareName: 'Proyectos',
+          hidden: false,
+          entries: [
+            { id: '6-sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
+          ],
+        },
         sampleFiles: [],
         sampleSubfolders: ['Proy1'],
       },
@@ -802,43 +892,51 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     ],
     checkSolution: (folders, principals) => {
       const issues: EvaluationIssue[] = [];
-      const onFolder = computeLocalEffectivePermissions('proy1', 'dir1', 'thisFolder', folders, principals);
-      const onSub = computeLocalEffectivePermissions('proy1', 'dir1', 'subfolders', folders, principals);
-      const onFiles = computeLocalEffectivePermissions('proy1', 'dir1', 'files', folders, principals);
+      const hasShare = verifyNetworkShareAvailable('proy1', 'dir1', folders, principals, issues, 'Dir1');
 
-      if (!onFolder.has('delete') && !onFolder.has('fullControl')) {
+      const onFolder = computeEffectivePermissions('proy1', 'dir1', 'thisFolder', 'network', folders, principals);
+      const onSub = computeEffectivePermissions('proy1', 'dir1', 'subfolders', 'network', folders, principals);
+      const onFiles = computeEffectivePermissions('proy1', 'dir1', 'files', 'network', folders, principals);
+
+      if (!onFolder.local.has('delete') && !onFolder.local.has('fullControl')) {
         issues.push({
           severity: 'success',
           title: 'Carpeta Proy1 protegida frente a borrado',
-          detail: 'Dir1 no tiene el permiso «Eliminar» sobre Proy1, por lo que no puede eliminar ni renombrar la carpeta raíz del proyecto.',
+          detail: 'Dir1 no tiene «Eliminar» sobre Proy1, por lo que no puede eliminar ni renombrar la carpeta raíz del proyecto.',
         });
       } else {
         issues.push({
           severity: 'error',
           title: 'Dir1 puede eliminar la propia carpeta Proy1',
-          detail: 'Desmarca «Control total» y «Eliminar» en «Esta carpeta, subcarpetas y archivos».',
+          detail: 'Desmarca «Control total» y «Eliminar» en NTFS sobre «Esta carpeta, subcarpetas y archivos».',
         });
       }
 
       if (
-        onFolder.has('deleteSubfoldersAndFiles') &&
-        onFolder.has('createFilesWriteData') &&
-        onFolder.has('createFoldersAppendData') &&
-        onFolder.has('changePermissions') &&
-        onFolder.has('takeOwnership') &&
-        onSub.has('deleteSubfoldersAndFiles') &&
-        onFiles.has('createFilesWriteData')
+        onFolder.effective.has('deleteSubfoldersAndFiles') &&
+        onFolder.effective.has('createFilesWriteData') &&
+        onFolder.effective.has('createFoldersAppendData') &&
+        onFolder.effective.has('changePermissions') &&
+        onFolder.effective.has('takeOwnership') &&
+        onSub.effective.has('deleteSubfoldersAndFiles') &&
+        onFiles.effective.has('createFilesWriteData')
       ) {
         issues.push({
           severity: 'success',
-          title: 'Administración completa del contenido verificada',
-          detail: 'Puede crear/eliminar subcarpetas y archivos, cambiar permisos y tomar posesión en toda la jerarquía interna.',
+          title: 'Administración remota completa del contenido verificada',
+          detail: 'Con «Control total» en Red y permiso especial NTFS, puede gestionar contenido, cambiar permisos y tomar posesión por red.',
         });
-      } else {
+      } else if (hasShare) {
+        const localOk =
+          onFolder.local.has('changePermissions') &&
+          onFolder.local.has('takeOwnership') &&
+          onFolder.local.has('deleteSubfoldersAndFiles');
         issues.push({
           severity: 'error',
-          title: 'Faltan permisos de administración sobre el contenido',
-          detail: 'Asegúrate de marcar los 12 permisos restantes (incluidos «Eliminar subcarpetas y archivos», «Cambiar permisos» y «Tomar posesión») en «Esta carpeta, subcarpetas y archivos».',
+          title: 'Faltan permisos efectivos de administración por red',
+          detail: localOk
+            ? 'En NTFS local has marcado los permisos correctos, pero en «Compartir (Red)» solo tiene «Cambiar/Leer»: asigna «Control total» en Red para permitir Cambiar permisos y Tomar posesión remotamente.'
+            : 'Marca los 12 permisos especiales (incluidos «Eliminar subcarpetas y archivos», «Cambiar permisos» y «Tomar posesión») en «Esta carpeta, subcarpetas y archivos» y «Control total» en Red.',
         });
       }
 
@@ -850,21 +948,21 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-entrega-practicas',
     number: 7,
-    title: 'Entrega en raíz y consulta de prácticas archivadas',
+    title: 'Entrega en raíz y consulta de prácticas archivadas por red',
     category: 'Entrega y consulta',
     difficulty: 'Avanzado',
     sourcePractice: 'Práctica Aulas SOR',
     machineName: 'EQUIPO_PROFESOR',
     targetFolderId: 'entrega_pr',
     targetPrincipalId: 'alumnos',
-    testAccessMode: 'local',
-    focusTab: 'entry',
+    testAccessMode: 'network',
+    focusTab: 'share',
     enunciado:
-      'En C:\\SOR\\Entrega_Practicas, los «Alumnos» deben poder ver la carpeta, subir sus prácticas directamente en la raíz Entrega_Practicas, y además leer los archivos que el Profesor archive en subcarpetas (ej. Corregidas). Sin embargo, NO deben poder modificar ni borrar archivos ya entregados, ni crear subcarpetas.',
+      'Los «Alumnos» acceden desde sus puestos en red a C:\\SOR\\Entrega_Practicas. Configura el acceso compartido en red y los permisos NTFS para que puedan ver la carpeta, subir prácticas en la raíz Entrega_Practicas y leer las corregidas que el Profesor archive en subcarpetas (ej. Corregidas), sin poder modificar ni borrar entregas ni crear subcarpetas.',
     contextNote:
-      'Si dieras «Crear archivos / escribir datos» en «Esta carpeta, subcarpetas y archivos», también podrían sobrescribir los archivos entregados por otros alumnos o las correcciones del profesor.',
+      'Necesitan «Cambiar» + «Leer» en el recurso compartido en red, y dos entradas NTFS diferenciadas para no propagar la creación/escritura a los archivos ya entregados.',
     hint:
-      'Crea DOS entradas para Alumnos: 1) «Solo esta carpeta» con Lectura y ejecución + «Crear archivos / escribir datos»; 2) «Esta carpeta, subcarpetas y archivos» solo con Lectura y ejecución.',
+      '1) Comparte C:\\SOR (o Entrega_Practicas) dando a Alumnos «Cambiar» y «Leer». 2) En NTFS crea dos entradas: «Solo esta carpeta» (Lectura y ejecución + «Crear archivos / escribir datos») y «Esta carpeta, subcarpetas y archivos» (solo Lectura y ejecución).',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'EQUIPO_PROFESOR\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -884,6 +982,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
           { id: '7-adm', principalId: 'admin', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '7-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
         ],
+        share: {
+          shared: false,
+          shareName: 'SOR',
+          hidden: false,
+          entries: [
+            { id: '7-sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
+          ],
+        },
         sampleFiles: [],
         sampleSubfolders: ['Entrega_Practicas'],
       },
@@ -912,31 +1018,35 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     ],
     checkSolution: (folders, principals) => {
       const issues: EvaluationIssue[] = [];
-      const onFolder = computeLocalEffectivePermissions('entrega_pr', 'alumnos', 'thisFolder', folders, principals);
-      const onSub = computeLocalEffectivePermissions('entrega_pr', 'alumnos', 'subfolders', folders, principals);
-      const onFiles = computeLocalEffectivePermissions('entrega_pr', 'alumnos', 'files', folders, principals);
+      const hasShare = verifyNetworkShareAvailable('entrega_pr', 'alumnos', folders, principals, issues, 'Alumnos');
 
-      if (onFolder.has('createFilesWriteData') && onFolder.has('listRead') && onFolder.has('traverse')) {
+      const onFolder = computeEffectivePermissions('entrega_pr', 'alumnos', 'thisFolder', 'network', folders, principals);
+      const onSub = computeEffectivePermissions('entrega_pr', 'alumnos', 'subfolders', 'network', folders, principals);
+      const onFiles = computeEffectivePermissions('entrega_pr', 'alumnos', 'files', 'network', folders, principals);
+
+      if (onFolder.effective.has('createFilesWriteData') && onFolder.effective.has('listRead') && onFolder.effective.has('traverse')) {
         issues.push({
           severity: 'success',
-          title: 'Entrega de prácticas en la raíz permitida',
+          title: 'Entrega de prácticas en la raíz permitida por red',
           detail: 'Alumnos puede entrar, listar y crear archivos en C:\\SOR\\Entrega_Practicas.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
-          title: 'Faltan permisos para entregar archivos en la raíz',
-          detail: 'Añade una entrada para Alumnos en «Solo esta carpeta» con Lectura y ejecución + «Crear archivos / escribir datos».',
+          title: 'Faltan permisos para entregar archivos en la raíz por red',
+          detail: onFolder.local.has('createFilesWriteData')
+            ? 'En NTFS local es correcto, pero en «Compartir (Red)» falta marcar «Cambiar» para Alumnos.'
+            : 'Añade una entrada NTFS para Alumnos en «Solo esta carpeta» con Lectura y ejecución + «Crear archivos / escribir datos» y «Cambiar» en Red.',
         });
       }
 
-      if (onSub.has('listRead') && onSub.has('traverse') && onFiles.has('listRead')) {
+      if (onSub.effective.has('listRead') && onSub.effective.has('traverse') && onFiles.effective.has('listRead')) {
         issues.push({
           severity: 'success',
           title: 'Consulta de subcarpetas archivadas activa',
           detail: 'Alumnos puede explorar las subcarpetas de prácticas corregidas y leer los archivos.',
         });
-      } else {
+      } else if (hasShare) {
         issues.push({
           severity: 'error',
           title: 'No pueden consultar prácticas archivadas en subcarpetas',
@@ -944,7 +1054,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         });
       }
 
-      if (!onFiles.has('createFilesWriteData') && !onSub.has('createFilesWriteData') && !onFolder.has('createFoldersAppendData') && !onFiles.has('delete') && !onFolder.has('delete')) {
+      if (!onFiles.local.has('createFilesWriteData') && !onSub.local.has('createFilesWriteData') && !onFolder.local.has('createFoldersAppendData') && !onFiles.local.has('delete') && !onFolder.local.has('delete')) {
         issues.push({
           severity: 'success',
           title: 'Integridad de entregas y carpetas protegida',

@@ -116,6 +116,9 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
     return children.map((folder) => {
       const isSelected = folder.id === selectedFolderId;
       const isTarget = mode !== 'sandbox' && scenario?.targetFolderId === folder.id;
+      const inheritedShare = !folder.share?.shared
+        ? findApplicableShareFolder(folder.id, folders)
+        : null;
       return (
         <div key={folder.id}>
           <button
@@ -137,17 +140,28 @@ export const ScenarioSidebar: React.FC<ScenarioSidebarProps> = ({
               <span className="truncate font-mono text-[12px]">{folder.name}</span>
             </span>
             <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-slate-500">
-              {folder.share?.shared && (
-                <Network
-                  className="h-3.5 w-3.5 text-sky-600"
-                  aria-label="Carpeta compartida en red"
-                />
-              )}
+              {folder.share?.shared ? (
+                <span title={`Compartida directamente: ${folder.share.shareName}`}>
+                  <Network
+                    className="h-3.5 w-3.5 text-sky-600"
+                    aria-label="Carpeta compartida en red"
+                  />
+                </span>
+              ) : inheritedShare?.share ? (
+                <span title={`Accesible en red vía ${inheritedShare.name} (${inheritedShare.share.shareName})`}>
+                  <Network
+                    className="h-3.5 w-3.5 text-sky-300"
+                    aria-label="Accesible en red por carpeta padre compartida"
+                  />
+                </span>
+              ) : null}
               {!folder.inheritanceEnabled && (
-                <Lock
-                  className="h-3 w-3 text-slate-400"
-                  aria-label="Herencia deshabilitada"
-                />
+                <span title="Herencia NTFS deshabilitada">
+                  <Lock
+                    className="h-3 w-3 text-slate-400"
+                    aria-label="Herencia deshabilitada"
+                  />
+                </span>
               )}
               {isTarget && (
                 <span className="font-sans text-[11px] font-medium text-[#0067C0]">

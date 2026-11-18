@@ -30,6 +30,7 @@ import {
   SCOPE_LABELS,
   SCOPE_OPTIONS,
   computeEffectivePermissions,
+  findApplicableShareFolder,
   getAllAcesForFolder,
   summarizeAceAccess,
 } from '../utils/ntfsEngine';
@@ -45,6 +46,7 @@ interface NtfsConsoleProps {
   activeTab: ConsoleTab;
   onChangeTab: (tab: ConsoleTab) => void;
   defaultPrincipalId: string;
+  onSelectFolder?: (folderId: string) => void;
   onUpdateFolder: (updated: VirtualFolderNode) => void;
   onDisableInheritance: (folderId: string, strategy: 'convert' | 'remove') => void;
   onEnableInheritance: (folderId: string) => void;
@@ -60,6 +62,7 @@ export const NtfsConsole: React.FC<NtfsConsoleProps> = ({
   activeTab,
   onChangeTab,
   defaultPrincipalId,
+  onSelectFolder,
   onUpdateFolder,
   onDisableInheritance,
   onEnableInheritance,
@@ -385,6 +388,10 @@ export const NtfsConsole: React.FC<NtfsConsoleProps> = ({
   const rightPermissions = ALL_NTFS_PERMISSIONS.filter((p) => p.column === 'right');
 
   const shareConfig = folder.share;
+  const applicableShare = findApplicableShareFolder(folder.id, allFolders);
+  const parentFolder = folder.parentId
+    ? allFolders.find((f) => f.id === folder.parentId) ?? null
+    : null;
   const activeShareEntry = shareConfig?.entries.find(
     (e) => e.principalId === selectedSharePrincipalId
   );
@@ -954,8 +961,53 @@ export const NtfsConsole: React.FC<NtfsConsoleProps> = ({
             </div>
 
             {!shareConfig?.shared ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-5 text-xs text-slate-600">
-                Esta carpeta no está compartida directamente en red. Activa «Compartir esta carpeta» si deseas definir permisos de recurso compartido o un nombre oculto con <span className="font-mono font-semibold text-slate-900">$</span>.
+              <div className="space-y-3">
+                {applicableShare && applicableShare.id !== folder.id && applicableShare.share ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200 bg-sky-50/70 p-4 text-xs text-slate-700">
+                    <div className="space-y-1">
+                      <p className="font-semibold text-slate-900">
+                        Accesible en red a través de {applicableShare.path}
+                      </p>
+                      <p>
+                        Esta subcarpeta no se comparte directamente, pero hereda el acceso remoto desde el recurso compartido{' '}
+                        <span className="font-mono font-semibold text-slate-900">
+                          \\{machineName}\{applicableShare.share.shareName}
+                        </span>
+                        . También puedes compartirla directamente activando la casilla superior.
+                      </p>
+                    </div>
+                    {onSelectFolder && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectFolder(applicableShare.id)}
+                        className="rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-[#0067C0] transition-colors hover:bg-sky-50 whitespace-nowrap shrink-0"
+                      >
+                        Editar recurso en {applicableShare.name}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/70 p-4 text-xs text-slate-700">
+                    <div className="space-y-1">
+                      <p className="font-semibold text-slate-900">
+                        Sin acceso por red todavía
+                      </p>
+                      <p>
+                        Ni esta carpeta ni sus carpetas padre están compartidas. Activa «Compartir esta carpeta» arriba
+                        {parentFolder ? ` o comparte su carpeta padre (${parentFolder.name})` : ''} y añade los permisos de red necesarios.
+                      </p>
+                    </div>
+                    {parentFolder && onSelectFolder && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectFolder(parentFolder.id)}
+                        className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-amber-50 whitespace-nowrap shrink-0"
+                      >
+                        Ir a compartir {parentFolder.name}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-5">

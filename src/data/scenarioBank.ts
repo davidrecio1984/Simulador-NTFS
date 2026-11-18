@@ -5,11 +5,8 @@ import {
   ScenarioEvaluation,
   VirtualFolderNode,
 } from '../types/ntfs';
-import {
-  computeEffectivePermissions,
-  computeLocalEffectivePermissions,
-} from '../utils/ntfsEngine';
-import { NTFS_SCENARIOS } from './scenarios';
+import { computeEffectivePermissions } from '../utils/ntfsEngine';
+import { NTFS_SCENARIOS, verifyNetworkShareAvailable } from './scenarios';
 
 const RX_PERMS = [
   'traverse',
@@ -642,9 +639,7 @@ const DOMAIN_THEMES: DomainTheme[] = [
 
 function makeBaseRoot(
   theme: DomainTheme,
-  extraSubfolder: string,
-  shared = true,
-  shareAllowChange = true
+  extraSubfolder: string
 ): VirtualFolderNode {
   return {
     id: 'root',
@@ -679,27 +674,19 @@ function makeBaseRoot(
         inheritedFrom: null,
       },
     ],
-    share: shared
-      ? {
-          shared: true,
-          shareName: theme.rootFolder,
-          hidden: false,
-          entries: [
-            {
-              id: 'sh-adm',
-              principalId: 'admin',
-              allow: ['read', 'change', 'full'],
-              deny: [],
-            },
-            {
-              id: 'sh-prim',
-              principalId: 'primary',
-              allow: shareAllowChange ? ['read', 'change'] : ['read'],
-              deny: [],
-            },
-          ],
-        }
-      : undefined,
+    share: {
+      shared: false,
+      shareName: theme.rootFolder,
+      hidden: false,
+      entries: [
+        {
+          id: 'sh-adm',
+          principalId: 'admin',
+          allow: ['read', 'change', 'full'],
+          deny: [],
+        },
+      ],
+    },
     sampleFiles: [],
     sampleSubfolders: [extraSubfolder],
   };
@@ -780,13 +767,13 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetFolderId: 'target',
       targetPrincipalId: 'primary',
       testAccessMode: 'network',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath}, configura los permisos NTFS para «${theme.groupPrimary}» de modo que puedan depositar archivos nuevos en la carpeta, pero NO puedan abrirla para listar las entregas de otros compañeros ni leer, modificar o eliminar archivos ya existentes.`,
-      contextNote: `La carpeta padre C:\\${theme.rootFolder} está compartida en red con permiso Cambiar y Leer para ${theme.groupPrimary}.`,
-      hint: `Aplica «Crear archivos / escribir datos» y «Permisos de lectura» en «Solo esta carpeta», dejando desmarcado «Mostrar carpeta / leer datos».`,
+      focusTab: 'share',
+      enunciado: `«${theme.groupPrimary}» se conectan desde otros equipos a través de la red a ${targetPath}. Comparte el recurso en red (en C:\\${theme.rootFolder} o en ${theme.dropFolder}) y configura los permisos NTFS para que puedan depositar archivos nuevos, pero NO puedan abrirla para listar entregas ajenas ni leer, modificar o eliminar archivos existentes.`,
+      contextNote: `Para acceder desde otro equipo es obligatorio activar «Compartir (Red)» con permiso «Cambiar» y «Leer» para ${theme.groupPrimary}, además de los permisos NTFS.`,
+      hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.dropFolder}), comparte la carpeta dando a ${theme.groupPrimary} «Cambiar» + «Leer». 2) En NTFS de ${theme.dropFolder}, aplica «Crear archivos / escribir datos» y «Permisos de lectura» en «Solo esta carpeta», sin «Mostrar carpeta / leer datos».`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.dropFolder, true, true),
+        makeBaseRoot(theme, theme.dropFolder),
         {
           id: 'target',
           name: theme.dropFolder,
@@ -804,20 +791,30 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const onF = computeEffectivePermissions('target', 'primary', 'thisFolder', 'network', folders, principals).effective;
-        const onFiles = computeEffectivePermissions('target', 'primary', 'files', 'network', folders, principals).effective;
-        if (onF.has('createFilesWriteData')) {
-          issues.push({ severity: 'success', title: 'Entrega habilitada', detail: `${theme.groupPrimary} puede crear archivos nuevos en la carpeta.` });
+        const hasShare = verifyNetworkShareAvailable(
+          'target',
+          'primary',
+          folders,
+          principals,
+          issues,
+          theme.groupPrimary
+        );
+        const onF = computeEffectivePermissions('target', 'primary', 'thisFolder', 'network', folders, principals);
+        const onFiles = computeEffectivePermissions('target', 'primary', 'files', 'network', folders, principals);
+        if (onF.effective.has('createFilesWriteData')) {
+          issues.push({ severity: 'success', title: 'Entrega por red habilitada', detail: `${theme.groupPrimary} puede crear archivos nuevos desde otro equipo.` });
+        } else if (hasShare && onF.local.has('createFilesWriteData')) {
+          issues.push({ severity: 'error', title: 'Bloqueo en permisos de Red', detail: `NTFS permite entregar, pero en «Compartir (Red)» debes conceder «Cambiar» (y «Leer») a ${theme.groupPrimary}.` });
         } else {
           issues.push({ severity: 'error', title: 'Falta creación de archivos', detail: 'Marca «Crear archivos / escribir datos» en «Solo esta carpeta».' });
         }
-        if (!onF.has('listRead') && !onFiles.has('listRead')) {
+        if (!onF.effective.has('listRead') && !onFiles.effective.has('listRead') && !onF.local.has('listRead') && !onFiles.local.has('listRead')) {
           issues.push({ severity: 'success', title: 'Privacidad de buzón ciego', detail: 'No pueden listar contenido ni leer entregas previas.' });
         } else {
-          issues.push({ severity: 'error', title: 'Pueden ver entregas ajenas', detail: 'Quita «Mostrar carpeta / leer datos».' });
+          issues.push({ severity: 'error', title: 'Pueden ver entregas ajenas', detail: 'Quita «Mostrar carpeta / leer datos» en NTFS.' });
         }
-        if (onFiles.has('createFilesWriteData') || onFiles.has('delete') || onF.has('delete') || onF.has('deleteSubfoldersAndFiles')) {
-          issues.push({ severity: 'error', title: 'Ámbito o borrado excesivo', detail: 'Usa «Solo esta carpeta» y no concedas permisos de eliminación.' });
+        if (onFiles.local.has('createFilesWriteData') || onFiles.local.has('delete') || onF.local.has('delete') || onF.local.has('deleteSubfoldersAndFiles')) {
+          issues.push({ severity: 'error', title: 'Ámbito o borrado excesivo en NTFS', detail: 'Usa «Solo esta carpeta» y no concedas permisos de eliminación.' });
         }
         return buildEval(issues);
       },
@@ -837,14 +834,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'target',
       targetPrincipalId: 'lead',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath}, «${theme.groupLead}» solo debe mantener el documento vigente sin crear subcarpetas de historial. Configura UNA entrada para que pueda listar la carpeta, crear, modificar y eliminar archivos, pero NO crear subcarpetas ni borrar la carpeta ${theme.enunciadoFolder}.`,
-      contextNote: `Este patrón evita que se acumulen subcarpetas antiguas dentro de una carpeta de publicación directa.`,
-      hint: `Usa el ámbito «Esta carpeta y archivos» con lectura, «Crear archivos / escribir datos», escribir atributos y «Eliminar subcarpetas y archivos» (sin «Crear carpetas / anexar datos» ni «Eliminar»).`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `Desde otro equipo de la red, «${theme.groupLead}» debe conectarse a ${targetPath} para mantener el documento vigente sin crear subcarpetas de historial. Comparte el recurso en red y configura UNA entrada NTFS para que pueda listar la carpeta, crear, modificar y eliminar archivos, pero NO crear subcarpetas ni borrar la carpeta ${theme.enunciadoFolder}.`,
+      contextNote: `Al trabajar desde otro equipo, ${theme.groupLead} necesita permiso de Red «Cambiar» (y «Leer») además de los permisos NTFS específicos.`,
+      hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.enunciadoFolder}), comparte para ${theme.groupLead} con «Cambiar» + «Leer». 2) En NTFS usa «Esta carpeta y archivos» con lectura, «Crear archivos / escribir datos», escribir atributos y «Eliminar subcarpetas y archivos» (sin «Crear carpetas / anexar datos» ni «Eliminar»).`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.enunciadoFolder, false, false),
+        makeBaseRoot(theme, theme.enunciadoFolder),
         {
           id: 'target',
           name: theme.enunciadoFolder,
@@ -863,26 +860,36 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const onF = computeLocalEffectivePermissions('target', 'lead', 'thisFolder', folders, principals);
-        const onSub = computeLocalEffectivePermissions('target', 'lead', 'subfolders', folders, principals);
-        const onFiles = computeLocalEffectivePermissions('target', 'lead', 'files', folders, principals);
-        if (onF.has('listRead') && onF.has('createFilesWriteData') && onFiles.has('createFilesWriteData')) {
-          issues.push({ severity: 'success', title: 'Lectura, creación y edición de archivos', detail: `${theme.groupLead} puede gestionar los archivos actuales.` });
+        const hasShare = verifyNetworkShareAvailable(
+          'target',
+          'lead',
+          folders,
+          principals,
+          issues,
+          theme.groupLead
+        );
+        const onF = computeEffectivePermissions('target', 'lead', 'thisFolder', 'network', folders, principals);
+        const onSub = computeEffectivePermissions('target', 'lead', 'subfolders', 'network', folders, principals);
+        const onFiles = computeEffectivePermissions('target', 'lead', 'files', 'network', folders, principals);
+        if (onF.effective.has('listRead') && onF.effective.has('createFilesWriteData') && onFiles.effective.has('createFilesWriteData')) {
+          issues.push({ severity: 'success', title: 'Lectura, creación y edición de archivos por red', detail: `${theme.groupLead} puede gestionar los archivos actuales desde otro equipo.` });
+        } else if (hasShare && onF.local.has('createFilesWriteData') && onFiles.local.has('createFilesWriteData')) {
+          issues.push({ severity: 'error', title: 'Falta permiso «Cambiar» en Red', detail: `NTFS es correcto, pero en «Compartir (Red)» falta conceder «Cambiar» a ${theme.groupLead}.` });
         } else {
           issues.push({ severity: 'error', title: 'Falta lectura o gestión de archivos', detail: 'Aplica lectura y «Crear archivos / escribir datos» en «Esta carpeta y archivos».' });
         }
-        if (onF.has('createFoldersAppendData')) {
-          issues.push({ severity: 'error', title: 'Puede crear subcarpetas', detail: 'Desmarca «Crear carpetas / anexar datos».' });
+        if (onF.effective.has('createFoldersAppendData') || onF.local.has('createFoldersAppendData')) {
+          issues.push({ severity: 'error', title: 'Puede crear subcarpetas', detail: 'Desmarca «Crear carpetas / anexar datos» en NTFS.' });
         } else {
           issues.push({ severity: 'success', title: 'Subcarpetas bloqueadas', detail: 'No podrá crear carpetas de historial.' });
         }
-        if ((onF.has('deleteSubfoldersAndFiles') || onFiles.has('delete')) && !onF.has('delete')) {
+        if ((onF.effective.has('deleteSubfoldersAndFiles') || onFiles.effective.has('delete')) && !onF.effective.has('delete') && !onF.local.has('delete')) {
           issues.push({ severity: 'success', title: 'Puede borrar archivos sin borrar la carpeta', detail: 'La carpeta raíz queda protegida.' });
         } else {
-          issues.push({ severity: 'error', title: 'Error en permisos de eliminación', detail: 'Marca «Eliminar subcarpetas y archivos» y quita «Eliminar» sobre la carpeta.' });
+          issues.push({ severity: 'error', title: 'Error en permisos de eliminación', detail: 'Marca «Eliminar subcarpetas y archivos» y quita «Eliminar» sobre la carpeta en NTFS (y asegura «Cambiar» en Red).' });
         }
-        if (onSub.size > 0) {
-          issues.push({ severity: 'error', title: 'Ámbito propagado a subcarpetas', detail: 'El ámbito correcto es «Esta carpeta y archivos».' });
+        if (onSub.local.size > 0) {
+          issues.push({ severity: 'error', title: 'Ámbito propagado a subcarpetas', detail: 'El ámbito correcto en NTFS es «Esta carpeta y archivos».' });
         }
         return buildEval(issues);
       },
@@ -902,11 +909,11 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'root',
       targetPrincipalId: 'primary',
-      testAccessMode: 'local',
+      testAccessMode: 'network',
       focusTab: 'security',
-      enunciado: `En ${rootPath} cuelga la subcarpeta ${theme.projectFolder}. Debes: 1) Deshabilitar la herencia de ${rootPath} y eliminar los grupos «Usuarios» y «Usuarios autentificados», y 2) Conceder a «${theme.groupPrimary}» Lectura y ejecución SOLO en ${rootPath}, sin que se herede hacia ${theme.projectFolder}.`,
-      contextNote: `De este modo ningún usuario no autorizado entra en subcarpetas de proyecto por herencia del disco C:\\.`,
-      hint: `En Seguridad avanzada pulsa «Deshabilitar herencia» (Convertir), quita Usuarios y Usuarios autentificados, y añade a ${theme.groupPrimary} con Lectura y ejecución en «Solo esta carpeta».`,
+      enunciado: `En ${rootPath} cuelga la subcarpeta ${theme.projectFolder}. «${theme.groupPrimary}» se conectará desde otro equipo a ${rootPath}. Debes: 1) Deshabilitar la herencia de ${rootPath} y eliminar «Usuarios» y «Usuarios autentificados», 2) Conceder a «${theme.groupPrimary}» Lectura y ejecución SOLO en ${rootPath} (sin heredar a ${theme.projectFolder}), y 3) Compartir ${rootPath} en red con «Leer» para «${theme.groupPrimary}».`,
+      contextNote: `Así proteges las subcarpetas de proyecto frente a la herencia de C:\\ y habilitas el acceso controlado desde otro equipo.`,
+      hint: `1) En Seguridad avanzada pulsa «Deshabilitar herencia» (Convertir), quita Usuarios y Usuarios autentificados, y añade a ${theme.groupPrimary} con Lectura y ejecución en «Solo esta carpeta». 2) En «Compartir (Red)» comparte ${rootPath} y concede «Leer» a ${theme.groupPrimary}.`,
       principals: makePrincipals(theme),
       initialFolders: [
         {
@@ -933,6 +940,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
           owner: `${theme.machine}\\Administradores`,
           inheritanceEnabled: true,
           aces: [],
+          share: {
+            shared: false,
+            shareName: theme.rootFolder,
+            hidden: false,
+            entries: [
+              { id: 'sh-adm', principalId: 'admin', allow: ['read', 'change', 'full'], deny: [] },
+            ],
+          },
           sampleFiles: [],
           sampleSubfolders: [theme.projectFolder],
         },
@@ -961,17 +976,18 @@ const ARCHETYPES: ArchetypeBuilder[] = [
         } else {
           issues.push({ severity: 'error', title: 'Permanecen Usuarios o Usuarios autentificados', detail: 'Quita ambos grupos de la ACL.' });
         }
-        const onRoot = computeLocalEffectivePermissions('root', 'primary', 'thisFolder', folders, principals);
-        const onChild = computeLocalEffectivePermissions('child', 'primary', 'thisFolder', folders, principals);
-        if (onRoot.has('listRead') && onRoot.has('traverse') && !onRoot.has('createFilesWriteData')) {
-          issues.push({ severity: 'success', title: 'Lectura en raíz correcta', detail: `${theme.groupPrimary} puede listar ${rootPath}.` });
+        verifyNetworkShareAvailable('root', 'primary', folders, principals, issues, theme.groupPrimary);
+        const onRoot = computeEffectivePermissions('root', 'primary', 'thisFolder', 'network', folders, principals);
+        const onChild = computeEffectivePermissions('child', 'primary', 'thisFolder', 'network', folders, principals);
+        if (onRoot.effective.has('listRead') && onRoot.effective.has('traverse') && !onRoot.effective.has('createFilesWriteData') && !onRoot.local.has('createFilesWriteData')) {
+          issues.push({ severity: 'success', title: 'Lectura en raíz por red correcta', detail: `${theme.groupPrimary} puede listar ${rootPath} desde otro equipo.` });
         } else {
-          issues.push({ severity: 'error', title: `Falta lectura para ${theme.groupPrimary}`, detail: 'Concede Lectura y ejecución sin escritura.' });
+          issues.push({ severity: 'error', title: `Falta lectura por red para ${theme.groupPrimary}`, detail: 'Concede Lectura y ejecución NTFS en «Solo esta carpeta» y «Leer» en «Compartir (Red)».' });
         }
-        if (!onChild.has('listRead') && !onChild.has('traverse')) {
+        if (!onChild.effective.has('listRead') && !onChild.effective.has('traverse') && !onChild.local.has('listRead')) {
           issues.push({ severity: 'success', title: 'Subcarpeta aislada', detail: `${theme.projectFolder} no hereda acceso.` });
         } else {
-          issues.push({ severity: 'error', title: `El permiso se propaga a ${theme.projectFolder}`, detail: 'Usa el ámbito «Solo esta carpeta».' });
+          issues.push({ severity: 'error', title: `El permiso se propaga a ${theme.projectFolder}`, detail: 'Usa el ámbito «Solo esta carpeta» en NTFS.' });
         }
         return buildEval(issues);
       },
@@ -991,14 +1007,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'root',
       targetPrincipalId: 'supervisor',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${rootPath}, configura una entrada para «${theme.groupSupervisor}» de modo que pueda leer y ejecutar absolutamente todo el contenido de ${rootPath} y de cualquier proyecto actual o futuro (como ${theme.projectFolder}), sin poder crear, editar ni borrar nada.`,
-      contextNote: `Al configurarlo en la carpeta padre con propagación total, cualquier nueva subcarpeta heredará el permiso.`,
-      hint: `Añade a ${theme.groupSupervisor} con ámbito «Esta carpeta, subcarpetas y archivos» y permisos de Lectura y ejecución.`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `«${theme.groupSupervisor}» se conectará por red desde otro equipo a ${rootPath}. Configura «Compartir (Red)» y una entrada NTFS para que pueda leer y ejecutar todo el contenido de ${rootPath} y cualquier subcarpeta actual o futura (como ${theme.projectFolder}), sin poder crear, editar ni borrar nada.`,
+      contextNote: `Al compartir la carpeta raíz en red con «Leer» y propagar NTFS «Lectura y ejecución» a toda la jerarquía, cualquier nueva subcarpeta quedará accesible en solo lectura.`,
+      hint: `1) En «Compartir (Red)» de ${rootPath}, activa compartir y da «Leer» a ${theme.groupSupervisor}. 2) En NTFS añade a ${theme.groupSupervisor} con ámbito «Esta carpeta, subcarpetas y archivos» y Lectura y ejecución.`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.projectFolder, false, false),
+        makeBaseRoot(theme, theme.projectFolder),
         {
           id: 'child',
           name: theme.projectFolder,
@@ -1013,17 +1029,18 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const r = computeLocalEffectivePermissions('root', 'supervisor', 'thisFolder', folders, principals);
-        const c = computeLocalEffectivePermissions('child', 'supervisor', 'files', folders, principals);
-        if (r.has('listRead') && r.has('traverse') && c.has('listRead') && c.has('traverse')) {
-          issues.push({ severity: 'success', title: 'Lectura propagada a toda la jerarquía', detail: `${theme.groupSupervisor} lee la raíz y las subcarpetas.` });
+        verifyNetworkShareAvailable('root', 'supervisor', folders, principals, issues, theme.groupSupervisor);
+        const r = computeEffectivePermissions('root', 'supervisor', 'thisFolder', 'network', folders, principals);
+        const c = computeEffectivePermissions('child', 'supervisor', 'files', 'network', folders, principals);
+        if (r.effective.has('listRead') && r.effective.has('traverse') && c.effective.has('listRead') && c.effective.has('traverse')) {
+          issues.push({ severity: 'success', title: 'Lectura por red propagada a toda la jerarquía', detail: `${theme.groupSupervisor} lee la raíz y las subcarpetas desde otro equipo.` });
         } else {
-          issues.push({ severity: 'error', title: 'Falta propagación completa', detail: 'Usa «Esta carpeta, subcarpetas y archivos» con Lectura y ejecución.' });
+          issues.push({ severity: 'error', title: 'Falta propagación o permiso de red', detail: 'Asegura «Leer» en «Compartir (Red)» y NTFS «Esta carpeta, subcarpetas y archivos» con Lectura y ejecución.' });
         }
-        if (!r.has('createFilesWriteData') && !c.has('createFilesWriteData') && !r.has('delete') && !c.has('delete')) {
+        if (!r.effective.has('createFilesWriteData') && !c.effective.has('createFilesWriteData') && !r.local.has('createFilesWriteData') && !c.local.has('createFilesWriteData') && !r.local.has('delete') && !c.local.has('delete')) {
           issues.push({ severity: 'success', title: 'Solo lectura preservada', detail: 'Sin permisos de modificación ni borrado.' });
         } else {
-          issues.push({ severity: 'error', title: 'Permisos de escritura o borrado detectados', detail: 'Retira cualquier permiso de creación, escritura o eliminación.' });
+          issues.push({ severity: 'error', title: 'Permisos de escritura o borrado detectados', detail: 'Retira cualquier permiso de creación, escritura o eliminación en NTFS.' });
         }
         return buildEval(issues);
       },
@@ -1043,14 +1060,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'target',
       targetPrincipalId: 'primary',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath}, el grupo «${theme.groupPrimary}» debe poder navegar por la carpeta y sus subcarpetas, leer todo y MODIFICAR el contenido de los archivos ya existentes. Sin embargo, NO debe poder crear archivos nuevos, NO debe crear subcarpetas y NO debe borrar ni archivos ni carpetas.`,
-      contextNote: `Requiere separar ámbitos en dos entradas de permiso para aprovechar los permisos dobles de NTFS.`,
-      hint: `Entrada 1: «Esta carpeta y subcarpetas» solo Lectura y ejecución. Entrada 2: «Solo archivos» con Lectura + «Crear archivos / escribir datos» (+ «Crear carpetas / anexar datos» y escribir atributos), sin «Eliminar».`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `Desde otro equipo, «${theme.groupPrimary}» accede por red a ${targetPath}. Deben poder navegar por la carpeta y subcarpetas, leer todo y MODIFICAR el contenido de archivos ya existentes; pero NO deben poder crear archivos nuevos, crear subcarpetas ni borrar archivos o carpetas. Configura «Compartir (Red)» y NTFS.`,
+      contextNote: `Necesitas compartir con «Cambiar» y «Leer» en Red para permitir guardar cambios remotamente, y separar dos ámbitos NTFS para aprovechar los permisos dobles.`,
+      hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.projectFolder}), concede a ${theme.groupPrimary} «Cambiar» + «Leer». 2) En NTFS: Entrada 1 «Esta carpeta y subcarpetas» solo Lectura y ejecución. Entrada 2 «Solo archivos» con Lectura + «Crear archivos / escribir datos» (+ anexar/escribir atributos), sin «Eliminar».`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.projectFolder, false, false),
+        makeBaseRoot(theme, theme.projectFolder),
         {
           id: 'target',
           name: theme.projectFolder,
@@ -1068,26 +1085,36 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const onF = computeLocalEffectivePermissions('target', 'primary', 'thisFolder', folders, principals);
-        const onSub = computeLocalEffectivePermissions('target', 'primary', 'subfolders', folders, principals);
-        const onFiles = computeLocalEffectivePermissions('target', 'primary', 'files', folders, principals);
-        if (onF.has('listRead') && onSub.has('listRead') && onFiles.has('listRead')) {
-          issues.push({ severity: 'success', title: 'Lectura completa en carpeta, subcarpetas y archivos', detail: 'Pueden explorar y abrir archivos.' });
+        const hasShare = verifyNetworkShareAvailable(
+          'target',
+          'primary',
+          folders,
+          principals,
+          issues,
+          theme.groupPrimary
+        );
+        const onF = computeEffectivePermissions('target', 'primary', 'thisFolder', 'network', folders, principals);
+        const onSub = computeEffectivePermissions('target', 'primary', 'subfolders', 'network', folders, principals);
+        const onFiles = computeEffectivePermissions('target', 'primary', 'files', 'network', folders, principals);
+        if (onF.effective.has('listRead') && onSub.effective.has('listRead') && onFiles.effective.has('listRead')) {
+          issues.push({ severity: 'success', title: 'Lectura completa por red', detail: 'Pueden explorar carpetas y abrir archivos desde otro equipo.' });
         } else {
-          issues.push({ severity: 'error', title: 'Falta lectura en algún nivel', detail: 'Asegura Lectura y ejecución en «Esta carpeta y subcarpetas» y en «Solo archivos».' });
+          issues.push({ severity: 'error', title: 'Falta lectura en algún nivel', detail: 'Asegura «Compartir (Red)» y Lectura y ejecución NTFS en «Esta carpeta y subcarpetas» y «Solo archivos».' });
         }
-        if (onFiles.has('createFilesWriteData')) {
-          issues.push({ severity: 'success', title: 'Edición de archivos existentes activa', detail: 'En «Solo archivos», Crear archivos/escribir datos permite sobrescribir datos.' });
+        if (onFiles.effective.has('createFilesWriteData')) {
+          issues.push({ severity: 'success', title: 'Edición remota de archivos existentes activa', detail: 'Red (Cambiar) ∩ NTFS (Solo archivos: escribir datos) permite guardar modificaciones.' });
+        } else if (hasShare && onFiles.local.has('createFilesWriteData')) {
+          issues.push({ severity: 'error', title: 'Bloqueo en permisos de Red', detail: `NTFS permite editar archivos, pero en «Compartir (Red)» debes marcar «Cambiar» para ${theme.groupPrimary}.` });
         } else {
-          issues.push({ severity: 'error', title: 'No pueden modificar archivos existentes', detail: 'Añade «Crear archivos / escribir datos» en «Solo archivos».' });
+          issues.push({ severity: 'error', title: 'No pueden modificar archivos existentes', detail: 'Añade «Crear archivos / escribir datos» en NTFS con ámbito «Solo archivos».' });
         }
-        if (onF.has('createFilesWriteData') || onSub.has('createFilesWriteData') || onF.has('createFoldersAppendData')) {
+        if (onF.local.has('createFilesWriteData') || onSub.local.has('createFilesWriteData') || onF.local.has('createFoldersAppendData')) {
           issues.push({ severity: 'error', title: 'Pueden crear archivos o subcarpetas nuevos', detail: 'Quita permisos de creación en «Esta carpeta y subcarpetas».' });
         } else {
           issues.push({ severity: 'success', title: 'Creación bloqueada en carpetas', detail: 'No pueden crear nuevos archivos ni subcarpetas.' });
         }
-        if (onFiles.has('delete') || onF.has('delete') || onF.has('deleteSubfoldersAndFiles')) {
-          issues.push({ severity: 'error', title: 'Pueden eliminar archivos o carpetas', detail: 'Desmarca Eliminar y Eliminar subcarpetas y archivos.' });
+        if (onFiles.local.has('delete') || onF.local.has('delete') || onF.local.has('deleteSubfoldersAndFiles')) {
+          issues.push({ severity: 'error', title: 'Pueden eliminar archivos o carpetas', detail: 'Desmarca Eliminar y Eliminar subcarpetas y archivos en NTFS.' });
         }
         return buildEval(issues);
       },
@@ -1107,14 +1134,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'target',
       targetPrincipalId: 'lead',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath}, «${theme.groupLead}» debe administrar por completo todo el contenido interno (crear y eliminar subcarpetas y archivos, modificar permisos y tomar posesión), pero NO debe poder eliminar ni renombrar la propia carpeta ${theme.projectFolder}.`,
-      contextNote: `Marcar «Control total» habilitaría también el borrado de la carpeta raíz; es necesario configurar un permiso Especial.`,
-      hint: `Selecciona «Esta carpeta, subcarpetas y archivos» y marca todos los permisos avanzados EXCEPTO «Control total» y «Eliminar».`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `«${theme.groupLead}» administra ${targetPath} remotamente desde otro equipo. Debe poder controlar todo el contenido interno por red (crear y borrar subcarpetas y archivos, cambiar permisos NTFS y tomar posesión), pero NO debe poder eliminar ni renombrar la propia carpeta ${theme.projectFolder}. Configura «Compartir (Red)» y NTFS.`,
+      contextNote: `Recuerda dos claves: en NTFS «Control total» permitiría borrar la carpeta raíz; y en «Compartir (Red)» hace falta «Control total» para poder cambiar permisos y tomar posesión por red.`,
+      hint: `1) En «Compartir (Red)» (de C:\\${theme.rootFolder} o ${theme.projectFolder}) concede «Control total» a ${theme.groupLead}. 2) En NTFS selecciona «Esta carpeta, subcarpetas y archivos» y marca todos los permisos avanzados EXCEPTO «Control total» y «Eliminar».`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.projectFolder, false, false),
+        makeBaseRoot(theme, theme.projectFolder),
         {
           id: 'target',
           name: theme.projectFolder,
@@ -1132,18 +1159,28 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const onF = computeLocalEffectivePermissions('target', 'lead', 'thisFolder', folders, principals);
-        const onSub = computeLocalEffectivePermissions('target', 'lead', 'subfolders', folders, principals);
-        const onFiles = computeLocalEffectivePermissions('target', 'lead', 'files', folders, principals);
-        if (!onF.has('delete') && !onF.has('fullControl')) {
+        const hasShare = verifyNetworkShareAvailable(
+          'target',
+          'lead',
+          folders,
+          principals,
+          issues,
+          theme.groupLead
+        );
+        const onF = computeEffectivePermissions('target', 'lead', 'thisFolder', 'network', folders, principals);
+        const onSub = computeEffectivePermissions('target', 'lead', 'subfolders', 'network', folders, principals);
+        const onFiles = computeEffectivePermissions('target', 'lead', 'files', 'network', folders, principals);
+        if (!onF.local.has('delete') && !onF.local.has('fullControl') && !onF.effective.has('delete')) {
           issues.push({ severity: 'success', title: `Carpeta ${theme.projectFolder} protegida`, detail: 'No podrá eliminar ni renombrar la carpeta raíz.' });
         } else {
-          issues.push({ severity: 'error', title: `Puede borrar ${theme.projectFolder}`, detail: 'Desmarca «Control total» y «Eliminar».' });
+          issues.push({ severity: 'error', title: `Puede borrar ${theme.projectFolder}`, detail: 'En NTFS desmarca «Control total» y «Eliminar».' });
         }
-        if (onF.has('deleteSubfoldersAndFiles') && onF.has('changePermissions') && onF.has('takeOwnership') && onSub.has('createFoldersAppendData') && onFiles.has('createFilesWriteData')) {
-          issues.push({ severity: 'success', title: 'Administración completa del contenido', detail: 'Incluye borrar contenido interno, cambiar permisos y tomar posesión.' });
+        if (onF.effective.has('deleteSubfoldersAndFiles') && onF.effective.has('changePermissions') && onF.effective.has('takeOwnership') && onSub.effective.has('createFoldersAppendData') && onFiles.effective.has('createFilesWriteData')) {
+          issues.push({ severity: 'success', title: 'Administración remota completa del contenido', detail: 'Red (Control total) ∩ NTFS especial permite borrar contenido, cambiar permisos y tomar posesión por red.' });
+        } else if (hasShare && onF.local.has('changePermissions') && onF.local.has('takeOwnership') && (!onF.effective.has('changePermissions') || !onF.effective.has('takeOwnership'))) {
+          issues.push({ severity: 'error', title: 'Falta «Control total» en Compartir (Red)', detail: `NTFS ya incluye Cambiar permisos y Tomar posesión, pero el permiso de red «Cambiar» los bloquea. Marca «Control total» en Compartir (Red) para ${theme.groupLead}.` });
         } else {
-          issues.push({ severity: 'error', title: 'Faltan permisos internos de administración', detail: 'Marca los 12 permisos restantes (incluidos Eliminar subcarpetas y archivos, Cambiar permisos y Tomar posesión) en «Esta carpeta, subcarpetas y archivos».' });
+          issues.push({ severity: 'error', title: 'Faltan permisos internos de administración', detail: 'Marca los 12 permisos NTFS restantes (incluidos Eliminar subcarpetas y archivos, Cambiar permisos y Tomar posesión) en «Esta carpeta, subcarpetas y archivos» y «Control total» en Red.' });
         }
         return buildEval(issues);
       },
@@ -1163,14 +1200,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'target',
       targetPrincipalId: 'primary',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath}, «${theme.groupPrimary}» debe poder ver la carpeta y subir archivos nuevos en la raíz ${theme.archiveFolder}, y además leer los elementos que ${theme.groupLead} archive en subcarpetas (${theme.sampleSubfolder}). NO deben poder modificar ni eliminar archivos existentes, ni crear subcarpetas.`,
-      contextNote: `Requiere combinar dos entradas con distinto «Se aplica a:» para no propagar la creación/escritura a archivos o subcarpetas.`,
-      hint: `Entrada 1: «Solo esta carpeta» con Lectura y ejecución + «Crear archivos / escribir datos». Entrada 2: «Esta carpeta, subcarpetas y archivos» con solo Lectura y ejecución.`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `«${theme.groupPrimary}» se conectan por red a ${targetPath}. Deben poder ver la carpeta y subir archivos nuevos en la raíz ${theme.archiveFolder}, y además leer los elementos que ${theme.groupLead} archive en subcarpetas (${theme.sampleSubfolder}). NO deben poder modificar ni eliminar archivos existentes, ni crear subcarpetas. Configura «Compartir (Red)» y NTFS.`,
+      contextNote: `Requiere «Cambiar» + «Leer» en Compartir (Red) para poder subir archivos por red, y dos entradas NTFS con distinto «Se aplica a:».`,
+      hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.archiveFolder}) da «Cambiar» + «Leer» a ${theme.groupPrimary}. 2) En NTFS: Entrada 1 «Solo esta carpeta» con Lectura y ejecución + «Crear archivos / escribir datos». Entrada 2 «Esta carpeta, subcarpetas y archivos» con solo Lectura y ejecución.`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.archiveFolder, false, false),
+        makeBaseRoot(theme, theme.archiveFolder),
         {
           id: 'target',
           name: theme.archiveFolder,
@@ -1188,21 +1225,31 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const onF = computeLocalEffectivePermissions('target', 'primary', 'thisFolder', folders, principals);
-        const onSub = computeLocalEffectivePermissions('target', 'primary', 'subfolders', folders, principals);
-        const onFiles = computeLocalEffectivePermissions('target', 'primary', 'files', folders, principals);
-        if (onF.has('createFilesWriteData') && onF.has('listRead')) {
-          issues.push({ severity: 'success', title: 'Subida en la raíz permitida', detail: 'Pueden listar la carpeta y crear archivos nuevos en la raíz.' });
+        const hasShare = verifyNetworkShareAvailable(
+          'target',
+          'primary',
+          folders,
+          principals,
+          issues,
+          theme.groupPrimary
+        );
+        const onF = computeEffectivePermissions('target', 'primary', 'thisFolder', 'network', folders, principals);
+        const onSub = computeEffectivePermissions('target', 'primary', 'subfolders', 'network', folders, principals);
+        const onFiles = computeEffectivePermissions('target', 'primary', 'files', 'network', folders, principals);
+        if (onF.effective.has('createFilesWriteData') && onF.effective.has('listRead')) {
+          issues.push({ severity: 'success', title: 'Subida en la raíz por red permitida', detail: 'Pueden listar la carpeta y crear archivos nuevos en la raíz desde otro equipo.' });
+        } else if (hasShare && onF.local.has('createFilesWriteData') && onF.local.has('listRead')) {
+          issues.push({ severity: 'error', title: 'Falta permiso «Cambiar» en Red', detail: `NTFS permite entregar en raíz, pero en «Compartir (Red)» falta «Cambiar» para ${theme.groupPrimary}.` });
         } else {
-          issues.push({ severity: 'error', title: 'No pueden entregar en la raíz', detail: 'Añade Lectura + «Crear archivos / escribir datos» en «Solo esta carpeta».' });
+          issues.push({ severity: 'error', title: 'No pueden entregar en la raíz', detail: 'Añade Lectura + «Crear archivos / escribir datos» en NTFS («Solo esta carpeta»).' });
         }
-        if (onSub.has('listRead') && onFiles.has('listRead')) {
+        if (onSub.effective.has('listRead') && onFiles.effective.has('listRead')) {
           issues.push({ severity: 'success', title: 'Consulta en subcarpetas activa', detail: `Pueden leer archivos en ${theme.sampleSubfolder}.` });
         } else {
           issues.push({ severity: 'error', title: 'Falta lectura en subcarpetas', detail: 'Añade Lectura y ejecución en «Esta carpeta, subcarpetas y archivos».' });
         }
-        if (onFiles.has('createFilesWriteData') || onSub.has('createFilesWriteData') || onF.has('createFoldersAppendData') || onFiles.has('delete')) {
-          issues.push({ severity: 'error', title: 'Permisos excesivos de escritura o borrado', detail: 'No concedas escritura sobre archivos ni creación de subcarpetas ni Eliminar.' });
+        if (onFiles.local.has('createFilesWriteData') || onSub.local.has('createFilesWriteData') || onF.local.has('createFoldersAppendData') || onFiles.local.has('delete')) {
+          issues.push({ severity: 'error', title: 'Permisos excesivos de escritura o borrado en NTFS', detail: 'No concedas escritura sobre archivos ni creación de subcarpetas ni Eliminar.' });
         }
         return buildEval(issues);
       },
@@ -1350,14 +1397,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'target',
       targetPrincipalId: 'primary',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath} se guardan ficheros de registro (${theme.sampleLog}). «${theme.groupPrimary}» debe poder entrar en la carpeta, leer los logs y AÑADIR nuevas líneas al final de los archivos existentes (anexar datos), pero NO debe poder sobrescribir datos previos, NO crear archivos ni subcarpetas nuevos y NO eliminar nada.`,
-      contextNote: `Prueba el segundo permiso doble: «Crear carpetas / anexar datos» significa «Anexar datos» al aplicarse a «Solo archivos».`,
-      hint: `Entrada 1: «Solo esta carpeta» con Lectura y ejecución. Entrada 2: «Solo archivos» con Lectura + «Crear carpetas / anexar datos» (+ escribir atributos si se desea), SIN «Crear archivos / escribir datos» y SIN «Eliminar».`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `En ${targetPath} se guardan ficheros de registro (${theme.sampleLog}). «${theme.groupPrimary}» se conectan por red desde otro equipo y deben poder entrar en la carpeta, leer los logs y AÑADIR nuevas líneas al final de los archivos existentes (anexar datos), pero NO deben poder sobrescribir datos previos, crear archivos/subcarpetas ni eliminar nada. Configura «Compartir (Red)» y NTFS.`,
+      contextNote: `Necesitas compartir con «Cambiar» y «Leer» para escribir por red, y usar el segundo permiso doble NTFS: «Crear carpetas / anexar datos» significa «Anexar datos» en «Solo archivos».`,
+      hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.logFolder}), concede «Cambiar» + «Leer» a ${theme.groupPrimary}. 2) En NTFS: Entrada 1 «Solo esta carpeta» con Lectura y ejecución. Entrada 2 «Solo archivos» con Lectura + «Crear carpetas / anexar datos», SIN «Crear archivos / escribir datos» ni «Eliminar».`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.logFolder, false, false),
+        makeBaseRoot(theme, theme.logFolder),
         {
           id: 'target',
           name: theme.logFolder,
@@ -1375,20 +1422,30 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const onF = computeLocalEffectivePermissions('target', 'primary', 'thisFolder', folders, principals);
-        const onFiles = computeLocalEffectivePermissions('target', 'primary', 'files', folders, principals);
-        if (onF.has('listRead') && onFiles.has('listRead')) {
-          issues.push({ severity: 'success', title: 'Lectura de carpeta y ficheros log', detail: 'Pueden abrir y consultar el archivo de registro.' });
+        const hasShare = verifyNetworkShareAvailable(
+          'target',
+          'primary',
+          folders,
+          principals,
+          issues,
+          theme.groupPrimary
+        );
+        const onF = computeEffectivePermissions('target', 'primary', 'thisFolder', 'network', folders, principals);
+        const onFiles = computeEffectivePermissions('target', 'primary', 'files', 'network', folders, principals);
+        if (onF.effective.has('listRead') && onFiles.effective.has('listRead')) {
+          issues.push({ severity: 'success', title: 'Lectura por red de carpeta y ficheros log', detail: 'Pueden abrir y consultar el archivo de registro desde otro equipo.' });
         } else {
-          issues.push({ severity: 'error', title: 'Falta lectura', detail: 'Concede Lectura y ejecución tanto en la carpeta como en los archivos.' });
+          issues.push({ severity: 'error', title: 'Falta lectura', detail: 'Concede Lectura y ejecución NTFS tanto en la carpeta como en los archivos y permiso «Leer» en Red.' });
         }
-        if (onFiles.has('createFoldersAppendData') && !onFiles.has('createFilesWriteData')) {
-          issues.push({ severity: 'success', title: 'Anexar datos sin sobrescritura', detail: '«Crear carpetas / anexar datos» sobre Solo archivos permite añadir líneas al final sin sobrescribir el historial.' });
+        if (onFiles.effective.has('createFoldersAppendData') && !onFiles.effective.has('createFilesWriteData') && !onFiles.local.has('createFilesWriteData')) {
+          issues.push({ severity: 'success', title: 'Anexar datos sin sobrescritura por red', detail: 'Red (Cambiar) ∩ NTFS (Solo archivos: Anexar datos) permite añadir líneas al final sin sobrescribir el historial.' });
+        } else if (hasShare && onFiles.local.has('createFoldersAppendData') && !onFiles.local.has('createFilesWriteData')) {
+          issues.push({ severity: 'error', title: 'Falta permiso «Cambiar» en Red', detail: `NTFS permite anexar datos, pero en «Compartir (Red)» debes conceder «Cambiar» a ${theme.groupPrimary}.` });
         } else {
           issues.push({ severity: 'error', title: 'Configuración de anexado incorrecta', detail: 'En «Solo archivos», marca «Crear carpetas / anexar datos» y deja desmarcado «Crear archivos / escribir datos».' });
         }
-        if (onF.has('createFilesWriteData') || onF.has('createFoldersAppendData') || onFiles.has('delete') || onF.has('delete')) {
-          issues.push({ severity: 'error', title: 'Permisos excesivos de creación o borrado', detail: 'No concedas creación de archivos/carpetas en la carpeta ni permisos Eliminar.' });
+        if (onF.local.has('createFilesWriteData') || onF.local.has('createFoldersAppendData') || onFiles.local.has('delete') || onF.local.has('delete')) {
+          issues.push({ severity: 'error', title: 'Permisos excesivos de creación o borrado en NTFS', detail: 'No concedas creación de archivos/carpetas en la carpeta ni permisos Eliminar.' });
         }
         return buildEval(issues);
       },
@@ -1408,14 +1465,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'target',
       targetPrincipalId: 'primary',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath} reside el programa ${theme.sampleScript}. «${theme.groupPrimary}» debe poder atravesar la carpeta y EJECUTAR los archivos ejecutables, pero NO debe poder listar la carpeta ni leer/copiar el contenido de los archivos ni modificar nada.`,
-      contextNote: `El permiso doble «Atravesar carpeta / ejecutar archivo» habilita la ejecución sin requerir «Mostrar carpeta / leer datos».`,
-      hint: `Aplica a «Esta carpeta y archivos» (o «Esta carpeta, subcarpetas y archivos») únicamente «Atravesar carpeta / ejecutar archivo» + lectura de atributos/permisos, SIN «Mostrar carpeta / leer datos».`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `En ${targetPath} reside ${theme.sampleScript}. «${theme.groupPrimary}» se conectan por red desde otro equipo y deben poder atravesar la carpeta y EJECUTAR los programas, pero NO poder listar la carpeta ni leer/copiar el contenido de los archivos ni modificar nada. Configura «Compartir (Red)» y NTFS.`,
+      contextNote: `En Red basta con «Leer» (que incluye atravesar/ejecutar en el recurso compartido) y la intersección con NTFS bloquea listar o leer datos.`,
+      hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.scriptFolder}), concede «Leer» a ${theme.groupPrimary}. 2) En NTFS aplica a «Esta carpeta y archivos» únicamente «Atravesar carpeta / ejecutar archivo» + lectura de atributos/permisos, SIN «Mostrar carpeta / leer datos».`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.scriptFolder, false, false),
+        makeBaseRoot(theme, theme.scriptFolder),
         {
           id: 'target',
           name: theme.scriptFolder,
@@ -1433,20 +1490,28 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const onF = computeLocalEffectivePermissions('target', 'primary', 'thisFolder', folders, principals);
-        const onFiles = computeLocalEffectivePermissions('target', 'primary', 'files', folders, principals);
-        if (onF.has('traverse') && onFiles.has('traverse')) {
-          issues.push({ severity: 'success', title: 'Atravesar y ejecutar habilitado', detail: `Pueden ejecutar ${theme.sampleScript} conociendo su ruta.` });
+        verifyNetworkShareAvailable(
+          'target',
+          'primary',
+          folders,
+          principals,
+          issues,
+          theme.groupPrimary
+        );
+        const onF = computeEffectivePermissions('target', 'primary', 'thisFolder', 'network', folders, principals);
+        const onFiles = computeEffectivePermissions('target', 'primary', 'files', 'network', folders, principals);
+        if (onF.effective.has('traverse') && onFiles.effective.has('traverse')) {
+          issues.push({ severity: 'success', title: 'Atravesar y ejecutar por red habilitado', detail: `Pueden ejecutar ${theme.sampleScript} por red conociendo su ruta.` });
         } else {
-          issues.push({ severity: 'error', title: 'Falta permiso de ejecución/atravesar', detail: 'Marca «Atravesar carpeta / ejecutar archivo» en «Esta carpeta y archivos».' });
+          issues.push({ severity: 'error', title: 'Falta ejecución o recurso compartido', detail: 'Marca «Atravesar carpeta / ejecutar archivo» en NTFS («Esta carpeta y archivos») y «Leer» en «Compartir (Red)».' });
         }
-        if (!onF.has('listRead') && !onFiles.has('listRead')) {
-          issues.push({ severity: 'success', title: 'Lectura y copiado bloqueados', detail: 'Sin «Mostrar carpeta / leer datos», no pueden listar ni leer el archivo.' });
+        if (!onF.effective.has('listRead') && !onFiles.effective.has('listRead') && !onF.local.has('listRead') && !onFiles.local.has('listRead')) {
+          issues.push({ severity: 'success', title: 'Lectura y copiado bloqueados', detail: 'Sin «Mostrar carpeta / leer datos» en NTFS, no pueden listar ni leer el archivo.' });
         } else {
-          issues.push({ severity: 'error', title: 'Pueden listar o leer el programa', detail: 'Desmarca «Mostrar carpeta / leer datos».' });
+          issues.push({ severity: 'error', title: 'Pueden listar o leer el programa', detail: 'Desmarca «Mostrar carpeta / leer datos» en NTFS.' });
         }
-        if (onF.has('createFilesWriteData') || onFiles.has('createFilesWriteData') || onFiles.has('delete')) {
-          issues.push({ severity: 'error', title: 'Permisos de escritura o borrado activos', detail: 'Retira cualquier permiso de modificación o eliminación.' });
+        if (onF.local.has('createFilesWriteData') || onFiles.local.has('createFilesWriteData') || onFiles.local.has('delete')) {
+          issues.push({ severity: 'error', title: 'Permisos de escritura o borrado activos en NTFS', detail: 'Retira cualquier permiso de modificación o eliminación.' });
         }
         return buildEval(issues);
       },
@@ -1466,14 +1531,14 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       machineName: theme.machine,
       targetFolderId: 'target',
       targetPrincipalId: 'restricted',
-      testAccessMode: 'local',
-      focusTab: 'entry',
-      enunciado: `En ${targetPath}, el grupo «${theme.groupPrimary}» ya tiene permiso de Modificar. Sin embargo, el subgrupo «${theme.groupRestricted}» (cuyos miembros pertenecen a ${theme.groupPrimary}) debe conservar la lectura pero tener DENEGADA explícitamente la escritura/creación y la eliminación sobre toda la carpeta, subcarpetas y archivos.`,
-      contextNote: `En NTFS, cualquier entrada «Denegar» prevalece siempre sobre las entradas «Permitir» heredadas o de otros grupos.`,
-      hint: `No quites a ${theme.groupPrimary}. Añade una entrada de tipo «Denegar» para «${theme.groupRestricted}» en «Esta carpeta, subcarpetas y archivos» marcando Crear archivos/escribir datos, Crear carpetas/anexar datos, Escribir atributos/extendidos, Eliminar subcarpetas y archivos y Eliminar.`,
+      testAccessMode: 'network',
+      focusTab: 'share',
+      enunciado: `Desde otro equipo, «${theme.groupPrimary}» accede por red a ${targetPath} donde ya tiene NTFS Modificar. Comparte la carpeta en red para «${theme.groupPrimary}» con «Cambiar» y «Leer», pero configura NTFS para que el subgrupo «${theme.groupRestricted}» (miembro de ${theme.groupPrimary}) conserve la lectura y tenga DENEGADA explícitamente la escritura/creación y la eliminación.`,
+      contextNote: `Al compartir para ${theme.groupPrimary} con Cambiar, ${theme.groupRestricted} también hereda ese permiso de red, por lo que la entrada NTFS «Denegar» es la que anula la escritura y borrado.`,
+      hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.projectFolder}) concede «Cambiar» + «Leer» a ${theme.groupPrimary}. 2) En NTFS conserva a ${theme.groupPrimary} y añade una entrada «Denegar» para ${theme.groupRestricted} en «Esta carpeta, subcarpetas y archivos» marcando escritura, creación y eliminación.`,
       principals: makePrincipals(theme),
       initialFolders: [
-        makeBaseRoot(theme, theme.projectFolder, false, false),
+        makeBaseRoot(theme, theme.projectFolder),
         {
           id: 'target',
           name: theme.projectFolder,
@@ -1492,26 +1557,36 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       ],
       checkSolution: (folders, principals) => {
         const issues: EvaluationIssue[] = [];
-        const pFiles = computeLocalEffectivePermissions('target', 'primary', 'files', folders, principals);
-        const rFolder = computeLocalEffectivePermissions('target', 'restricted', 'thisFolder', folders, principals);
-        const rFiles = computeLocalEffectivePermissions('target', 'restricted', 'files', folders, principals);
+        const hasShare = verifyNetworkShareAvailable(
+          'target',
+          'primary',
+          folders,
+          principals,
+          issues,
+          theme.groupPrimary
+        );
+        const pFiles = computeEffectivePermissions('target', 'primary', 'files', 'network', folders, principals);
+        const rFolder = computeEffectivePermissions('target', 'restricted', 'thisFolder', 'network', folders, principals);
+        const rFiles = computeEffectivePermissions('target', 'restricted', 'files', 'network', folders, principals);
 
-        if (pFiles.has('createFilesWriteData') && pFiles.has('delete')) {
-          issues.push({ severity: 'success', title: `Permisos de ${theme.groupPrimary} conservados`, detail: 'El resto de miembros mantiene el acceso Modificar.' });
+        if (pFiles.effective.has('createFilesWriteData') && pFiles.effective.has('delete')) {
+          issues.push({ severity: 'success', title: `Acceso por red de ${theme.groupPrimary} conservado`, detail: 'El resto de miembros mantiene Modificar desde otro equipo.' });
+        } else if (hasShare && pFiles.local.has('createFilesWriteData') && pFiles.local.has('delete')) {
+          issues.push({ severity: 'error', title: `Falta «Cambiar» en Red para ${theme.groupPrimary}`, detail: `En «Compartir (Red)» asigna «Cambiar» y «Leer» a ${theme.groupPrimary}.` });
         } else {
-          issues.push({ severity: 'error', title: `Se modificó el acceso de ${theme.groupPrimary}`, detail: `Conserva la entrada Permitir Modificar de ${theme.groupPrimary}.` });
+          issues.push({ severity: 'error', title: `Se modificó el acceso de ${theme.groupPrimary}`, detail: `Conserva la entrada NTFS Permitir Modificar de ${theme.groupPrimary}.` });
         }
 
-        if (rFolder.has('listRead') && rFiles.has('listRead')) {
-          issues.push({ severity: 'success', title: `Lectura preservada para ${theme.groupRestricted}`, detail: 'Pueden seguir leyendo la carpeta y archivos.' });
+        if (rFolder.effective.has('listRead') && rFiles.effective.has('listRead')) {
+          issues.push({ severity: 'success', title: `Lectura por red preservada para ${theme.groupRestricted}`, detail: 'Pueden seguir leyendo la carpeta y archivos.' });
         } else {
           issues.push({ severity: 'error', title: `Se bloqueó también la lectura de ${theme.groupRestricted}`, detail: 'No marques Control total ni permisos de lectura en la regla Denegar.' });
         }
 
-        if (!rFolder.has('createFilesWriteData') && !rFiles.has('createFilesWriteData') && !rFolder.has('createFoldersAppendData') && !rFiles.has('delete') && !rFolder.has('delete')) {
-          issues.push({ severity: 'success', title: 'Escritura y eliminación denegadas eficazmente', detail: `Denegar anula los permisos heredados de ${theme.groupPrimary}.` });
+        if (!rFolder.local.has('createFilesWriteData') && !rFiles.local.has('createFilesWriteData') && !rFolder.local.has('createFoldersAppendData') && !rFiles.local.has('delete') && !rFolder.effective.has('createFilesWriteData') && !rFiles.effective.has('delete')) {
+          issues.push({ severity: 'success', title: 'Escritura y eliminación denegadas en NTFS', detail: `Denegar en NTFS anula los permisos heredados de ${theme.groupPrimary}.` });
         } else {
-          issues.push({ severity: 'error', title: `${theme.groupRestricted} todavía puede escribir o borrar`, detail: `Añade una entrada «Denegar» para ${theme.groupRestricted} en «Esta carpeta, subcarpetas y archivos» bloqueando escritura, creación y eliminación.` });
+          issues.push({ severity: 'error', title: `${theme.groupRestricted} todavía puede escribir o borrar`, detail: `Añade una entrada NTFS «Denegar» para ${theme.groupRestricted} en «Esta carpeta, subcarpetas y archivos» bloqueando escritura, creación y eliminación.` });
         }
         return buildEval(issues);
       },

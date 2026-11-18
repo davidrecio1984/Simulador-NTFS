@@ -623,6 +623,7 @@ export default function App() {
                   defaultPrincipalId={
                     isSandbox ? 'alu_01' : currentScenario.targetPrincipalId
                   }
+                  onSelectFolder={handleSelectFolder}
                   onUpdateFolder={handleUpdateFolder}
                   onDisableInheritance={handleDisableInheritance}
                   onEnableInheritance={handleEnableInheritance}
