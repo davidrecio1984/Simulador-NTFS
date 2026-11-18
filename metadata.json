@@ -1,0 +1,6 @@
+{
+  "name": "Simulador NTFS — Consola Interactiva de Permisos Windows",
+  "description": "Simulador interactivo de permisos locales NTFS y permisos de red SMB para estudiantes de administración de sistemas Windows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
