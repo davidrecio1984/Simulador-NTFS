@@ -187,9 +187,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     testAccessMode: 'network',
     focusTab: 'share',
     enunciado:
-      'Los «Alumnos» se conectan desde sus equipos a través de la red a C:\\SOR\\Entrega_Examenes. Configura el recurso compartido (en C:\\SOR o en Entrega_Examenes) y los permisos NTFS para que puedan entregar su examen (arrastrando o pegando el archivo), pero NO puedan abrir la carpeta para listar ni leer, modificar o eliminar entregas de otros compañeros.',
+      'Los «Alumnos» tienen que entregar su examen en la carpeta compartida C:\\SOR\\Entrega_Examenes desde sus ordenadores de clase. Queremos que puedan dejar ahí su archivo, pero sin poder curiosear los exámenes que ya hayan subido sus compañeros ni tocar o borrar nada de lo que haya dentro.',
     contextNote:
-      'Al conectarse por red, recuerda activar «Compartir esta carpeta» con permiso «Cambiar» y «Leer» para Alumnos, y configurar los permisos especiales NTFS en Entrega_Examenes.',
+      'Se conectan desde otros equipos de la red. Ten en cuenta tanto el acceso por red como los permisos de la carpeta.',
     hint:
       '1) En C:\\SOR (o en Entrega_Examenes) activa «Compartir (Red)» y da a Alumnos «Cambiar» + «Leer». 2) En NTFS de Entrega_Examenes añade a Alumnos con ámbito «Solo esta carpeta» y «Crear archivos / escribir datos» + «Permisos de lectura», SIN «Mostrar carpeta / leer datos».',
     principals: [
@@ -312,9 +312,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     testAccessMode: 'network',
     focusTab: 'share',
     enunciado:
-      'El usuario «Profesor» gestionará C:\\SOR\\Enunciado_Examenes conectándose desde otro equipo por red. Comparte el recurso en red para Profesor y configura UNA entrada NTFS en Enunciado_Examenes para que pueda ver el contenido, crear, modificar y eliminar archivos, pero NO pueda crear subcarpetas ni eliminar la propia carpeta Enunciado_Examenes.',
+      'El «Profesor» se va a conectar desde su equipo a C:\\SOR\\Enunciado_Examenes para ir colgando y actualizando el examen vigente. Necesita poder ver lo que hay, subir archivos nuevos, editarlos o borrarlos si hace falta, pero no queremos que empiece a crear subcarpetas de historial ni que borre por error la carpeta Enunciado_Examenes.',
     contextNote:
-      'La herencia ya está deshabilitada en Enunciado_Examenes y Alumnos ya tiene lectura. Recuerda compartir la carpeta padre C:\\SOR (o Enunciado_Examenes) con permiso en red «Cambiar».',
+      'Hazlo dejando una única regla nueva para Profesor en la carpeta, sin tocar la que ya tienen los Alumnos.',
     hint:
       '1) En Compartir (Red) de C:\\SOR (o Enunciado_Examenes) añade a Profesor con «Cambiar» y «Leer». 2) En NTFS de Enunciado_Examenes usa «Esta carpeta y archivos» con lectura, «Crear archivos / escribir datos», escribir atributos y «Eliminar subcarpetas y archivos», sin «Crear carpetas» ni «Eliminar».',
     principals: [
@@ -334,6 +334,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         aces: [
           { id: '2-adm', principalId: 'admin', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '2-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
+          { id: '2-prof', principalId: 'profesor', type: 'allow', scope: 'this_folder_only', permissions: [...RX_PERMS], inheritedFrom: null },
         ],
         share: {
           shared: false,
@@ -450,7 +451,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-raiz-proyectos',
     number: 3,
-    title: 'Aislar la carpeta raíz compartida sin propagar a subcarpetas',
+    title: 'Acceso a la raíz compartida sin entrar en subcarpetas',
     category: 'Herencia y aislamiento',
     difficulty: 'Básico',
     sourcePractice: 'Práctica Repositorio',
@@ -460,11 +461,11 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     testAccessMode: 'network',
     focusTab: 'share',
     enunciado:
-      'Los usuarios de «Proyectosenred» accederán desde otro equipo a C:\\Proyectos (donde cuelgan Proy1, Proy2 y Proy3). Debes: 1) Compartir C:\\Proyectos en red para Proyectosenred, 2) Deshabilitar la herencia en NTFS y quitar a Usuarios y Usuarios autentificados, y 3) Dar Lectura y ejecución a Proyectosenred SOLO en la carpeta Proyectos, sin propagar lectura a Proy1.',
+      'El grupo «Proyectosenred» va a entrar desde otros equipos a C:\\Proyectos, donde están las carpetas Proy1, Proy2 y Proy3. Al conectarse, solo deberían poder ver qué carpetas de proyecto hay dentro de Proyectos, pero sin poder meterse en Proy1 ni heredar accesos genéricos del sistema.',
     contextNote:
-      'Así pueden entrar al recurso compartido \\\\REPOSITORIO\\Proyectos y ver qué carpetas existen, pero sin heredar acceso al contenido de los proyectos.',
+      'Revisa tanto los permisos de red como los grupos generales que vienen heredados desde C:\\.',
     hint:
-      '1) En Compartir (Red) de C:\\Proyectos activa «Compartir esta carpeta» y añade a Proyectosenred (con Leer o Control total si luego habrá subcarpetas con edición). 2) En Seguridad avanzada deshabilita herencia (Convertir), quita Usuarios/Usuarios autentificados y añade a Proyectosenred con Lectura y ejecución en «Solo esta carpeta».',
+      '1) En Compartir (Red) de C:\\Proyectos activa «Compartir esta carpeta» y añade a Proyectosenred (con Leer). 2) En Seguridad avanzada deshabilita herencia (Convertir), quita Usuarios y Usuarios autentificados y añade a Proyectosenred con Lectura y ejecución en «Solo esta carpeta».',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'REPOSITORIO\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -558,7 +559,14 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
       const onFolder = computeEffectivePermissions('proyectos', 'proyectosenred', 'thisFolder', 'network', folders, principals);
       const onProy1 = computeEffectivePermissions('proy1', 'proyectosenred', 'thisFolder', 'network', folders, principals);
 
-      if (onFolder.effective.has('listRead') && onFolder.effective.has('traverse') && !onFolder.effective.has('createFilesWriteData') && !onFolder.effective.has('delete')) {
+      if (
+        onFolder.effective.has('listRead') &&
+        onFolder.effective.has('traverse') &&
+        !onFolder.effective.has('createFilesWriteData') &&
+        !onFolder.effective.has('delete') &&
+        !onFolder.local.has('createFilesWriteData') &&
+        !onFolder.local.has('delete')
+      ) {
         issues.push({
           severity: 'success',
           title: 'Lectura por red correcta en C:\\Proyectos',
@@ -568,7 +576,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         issues.push({
           severity: 'error',
           title: 'Permisos incorrectos para Proyectosenred en C:\\Proyectos',
-          detail: 'Concede «Lectura y ejecución» en NTFS sin escritura.',
+          detail: 'Concede «Lectura y ejecución» en NTFS sin permisos de escritura o borrado.',
         });
       }
 
@@ -604,11 +612,11 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     testAccessMode: 'network',
     focusTab: 'share',
     enunciado:
-      'El grupo «Ejecutivos» se conecta desde sus portátiles en red a C:\\Proyectos. Configura los permisos de Red (en C:\\Proyectos) y NTFS para que puedan leer y ejecutar todo el contenido de C:\\Proyectos y de cualquier subcarpeta o archivo actual o futuro, pero sin poder crear, editar ni borrar nada.',
+      'Los miembros de «Ejecutivos» quieren echar un vistazo desde sus portátiles a todo lo que se guarda en C:\\Proyectos y en cualquier carpeta de proyecto que haya ahora o se cree más adelante. Solo es para consultar y abrir archivos, así que no deben poder cambiar, añadir ni borrar absolutamente nada.',
     contextNote:
-      'En Compartir (Red) puedes asignar permiso a Ejecutivos (o a Proyectosenred si ejec1 pertenece a ambos), y los permisos NTFS filtrarán el acceso efectivo a solo lectura en toda la jerarquía.',
+      'Ten en cuenta que se conectarán desde fuera de ese equipo, así que revisa la configuración de red y la herencia hacia las subcarpetas.',
     hint:
-      '1) En Compartir (Red) de C:\\Proyectos habilita compartir y añade a Ejecutivos con «Leer» (o superior). 2) En NTFS añade a Ejecutivos con «Esta carpeta, subcarpetas y archivos» y Lectura y ejecución.',
+      '1) En Compartir (Red) de C:\\Proyectos habilita compartir y añade a Ejecutivos con «Leer». 2) En NTFS añade a Ejecutivos con «Esta carpeta, subcarpetas y archivos» y Lectura y ejecución.',
     principals: [
       { id: 'admin', name: 'Administradores', displayName: 'REPOSITORIO\\Administradores', kind: 'system' },
       { id: 'system', name: 'SYSTEM', displayName: 'SYSTEM', kind: 'system' },
@@ -656,6 +664,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
       const issues: EvaluationIssue[] = [];
       const hasShare = verifyNetworkShareAvailable('proyectos', 'ejecutivos', folders, principals, issues, 'Ejecutivos');
 
+      const localF = computeEffectivePermissions('proyectos', 'ejecutivos', 'thisFolder', 'network', folders, principals).local;
+      const localS = computeEffectivePermissions('proyectos', 'ejecutivos', 'subfolders', 'network', folders, principals).local;
+      const localFi = computeEffectivePermissions('proyectos', 'ejecutivos', 'files', 'network', folders, principals).local;
       const f = computeEffectivePermissions('proyectos', 'ejecutivos', 'thisFolder', 'network', folders, principals).effective;
       const s = computeEffectivePermissions('proyectos', 'ejecutivos', 'subfolders', 'network', folders, principals).effective;
       const fi = computeEffectivePermissions('proyectos', 'ejecutivos', 'files', 'network', folders, principals).effective;
@@ -680,7 +691,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         });
       }
 
-      if (!hasWrite(f) && !hasWrite(s) && !hasWrite(fi)) {
+      if (!hasWrite(f) && !hasWrite(s) && !hasWrite(fi) && !hasWrite(localF) && !hasWrite(localS) && !hasWrite(localFi)) {
         issues.push({
           severity: 'success',
           title: 'Sin permisos de escritura o borrado',
@@ -702,7 +713,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-modificar-sin-crear',
     number: 5,
-    title: 'Modificar archivos existentes por red sin crear nuevos ni borrar',
+    title: 'Editar archivos ya creados sin añadir nuevos ni borrar',
     category: 'Permisos dobles',
     difficulty: 'Avanzado',
     sourcePractice: 'Práctica Repositorio (Permisos dobles)',
@@ -712,9 +723,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     testAccessMode: 'network',
     focusTab: 'share',
     enunciado:
-      'Los participantes «Par1» acceden desde otro equipo por red a C:\\Proyectos\\Proy1. Configura los permisos en Red (en C:\\Proyectos o Proy1) y los permisos NTFS en Proy1 para que puedan leer todo y MODIFICAR el contenido de los archivos existentes, pero NO puedan crear archivos nuevos, NO puedan crear subcarpetas y NO puedan borrar ni archivos ni carpetas.',
+      'Los compañeros de «Par1» trabajan desde otros ordenadores en C:\\Proyectos\\Proy1. Necesitan navegar por la carpeta y sus subcarpetas, abrir los documentos y editar los archivos que ya existen para actualizarlos. Eso sí: no pueden crear archivos nuevos, ni crear carpetas nuevas, ni borrar nada de lo que hay.',
     contextNote:
-      'En Red necesitan permiso «Cambiar» para poder guardar modificaciones en los archivos, mientras que NTFS filtra mediante dos entradas que no puedan crear ni borrar.',
+      'Acceden en red desde otros equipos. Piensa bien en cómo cambian los permisos según se apliquen a carpetas o a archivos.',
     hint:
       '1) Comparte C:\\Proyectos (o Proy1) dando a Par1 permiso de red «Cambiar» + «Leer». 2) En NTFS de Proy1 crea 2 entradas para Par1: «Esta carpeta y subcarpetas» (Lectura y ejecución) y «Solo archivos» (Lectura + «Crear archivos / escribir datos» + «Crear carpetas / anexar datos» + escribir atributos, SIN «Eliminar»).',
     principals: [
@@ -736,6 +747,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
           { id: '5-adm', principalId: 'admin', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '5-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '5-ej', principalId: 'ejecutivos', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...RX_PERMS], inheritedFrom: null },
+          { id: '5-par', principalId: 'par1', type: 'allow', scope: 'this_folder_only', permissions: [...RX_PERMS], inheritedFrom: null },
         ],
         share: {
           shared: false,
@@ -834,7 +846,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-director-sin-borrar-raiz',
     number: 6,
-    title: 'Administración remota del contenido sin eliminar la carpeta padre',
+    title: 'Control total interno sin poder borrar la carpeta',
     category: 'Protección de carpeta raíz',
     difficulty: 'Intermedio',
     sourcePractice: 'Práctica Repositorio / Aulas SOR',
@@ -844,9 +856,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     testAccessMode: 'network',
     focusTab: 'share',
     enunciado:
-      'Los directores «Dir1» administran C:\\Proyectos\\Proy1 desde otro equipo en red. Deben poder crear y borrar subcarpetas y archivos, cambiar permisos NTFS y tomar posesión a través de la red, pero NO deben poder eliminar ni renombrar la propia carpeta Proy1.',
+      'El grupo «Dir1» lleva la coordinación de C:\\Proyectos\\Proy1 desde otro ordenador de la oficina. Tienen que poder hacer de todo dentro del proyecto —crear y borrar archivos o subcarpetas, cambiar permisos y hasta hacerse propietarios de elementos internos—, pero hay una línea roja: no pueden eliminar ni cambiar el nombre de la propia carpeta Proy1.',
     contextNote:
-      'Ojo con el permiso de Red: «Cambiar» en Compartir NO permite cambiar permisos ni tomar posesión por red; necesitarán «Control total» en Red, mientras NTFS bloquea «Eliminar» sobre Proy1.',
+      'Como trabajan a distancia por red, comprueba qué límite impone la forma de compartir la carpeta frente a los permisos de seguridad.',
     hint:
       '1) En Compartir (Red) de C:\\Proyectos (o Proy1) asigna a Dir1 «Control total». 2) En NTFS de Proy1 usa «Esta carpeta, subcarpetas y archivos» marcando los 12 permisos especiales EXCEPTO «Control total» y «Eliminar».',
     principals: [
@@ -866,6 +878,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         aces: [
           { id: '6-adm', principalId: 'admin', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '6-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
+          { id: '6-dir', principalId: 'dir1', type: 'allow', scope: 'this_folder_only', permissions: [...RX_PERMS], inheritedFrom: null },
         ],
         share: {
           shared: false,
@@ -948,7 +961,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-entrega-practicas',
     number: 7,
-    title: 'Entrega en raíz y consulta de prácticas archivadas por red',
+    title: 'Subir prácticas y consultar las corregidas',
     category: 'Entrega y consulta',
     difficulty: 'Avanzado',
     sourcePractice: 'Práctica Aulas SOR',
@@ -958,9 +971,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     testAccessMode: 'network',
     focusTab: 'share',
     enunciado:
-      'Los «Alumnos» acceden desde sus puestos en red a C:\\SOR\\Entrega_Practicas. Configura el acceso compartido en red y los permisos NTFS para que puedan ver la carpeta, subir prácticas en la raíz Entrega_Practicas y leer las corregidas que el Profesor archive en subcarpetas (ej. Corregidas), sin poder modificar ni borrar entregas ni crear subcarpetas.',
+      'Los «Alumnos» se conectan desde sus puestos a C:\\SOR\\Entrega_Practicas. Ahí mismo tienen que poder entrar y subir sus prácticas nuevas en la carpeta principal, y también consultar lo que el profesor vaya dejando ya corregido dentro de subcarpetas como Corregidas. Pero ojo: no pueden modificar entregas anteriores, ni borrar archivos, ni crear subcarpetas.',
     contextNote:
-      'Necesitan «Cambiar» + «Leer» en el recurso compartido en red, y dos entradas NTFS diferenciadas para no propagar la creación/escritura a los archivos ya entregados.',
+      'Acceden desde otros equipos del aula; combina el acceso en red con reglas distintas según dónde afecten.',
     hint:
       '1) Comparte C:\\SOR (o Entrega_Practicas) dando a Alumnos «Cambiar» y «Leer». 2) En NTFS crea dos entradas: «Solo esta carpeta» (Lectura y ejecución + «Crear archivos / escribir datos») y «Esta carpeta, subcarpetas y archivos» (solo Lectura y ejecución).',
     principals: [
@@ -981,6 +994,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
         aces: [
           { id: '7-adm', principalId: 'admin', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
           { id: '7-sys', principalId: 'system', type: 'allow', scope: 'this_folder_subfolders_files', permissions: [...FULL_PERMS], inheritedFrom: null },
+          { id: '7-alu', principalId: 'alumnos', type: 'allow', scope: 'this_folder_only', permissions: [...RX_PERMS], inheritedFrom: null },
         ],
         share: {
           shared: false,
@@ -1076,7 +1090,7 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
   {
     id: 'sc-interseccion-red-ntfs',
     number: 8,
-    title: 'Intersección Red ∩ NTFS y recurso compartido oculto ($)',
+    title: 'Carpeta oculta en red con límite para Auditores',
     category: 'Intersección Red y NTFS',
     difficulty: 'Intermedio',
     sourcePractice: 'Permisos locales y en red',
@@ -1087,9 +1101,9 @@ export const NTFS_SCENARIOS: NtfsScenario[] = [
     focusTab: 'share',
     requireNetworkCheck: true,
     enunciado:
-      'La carpeta C:\\Datos\\Contabilidad debe compartirse en red de forma OCULTA como «Contabilidad$». Aunque el grupo «Auditores» tiene localmente en NTFS permiso de Modificar sobre «Esta carpeta, subcarpetas y archivos», al acceder por red solo deben poder LEER (sin editar ni eliminar nada). Configura la pestaña Compartir (Red) manteniendo su permiso local NTFS.',
+      'Queremos publicar en red la carpeta C:\\Datos\\Contabilidad de forma oculta (para que no salga al explorar la red) usando el nombre «Contabilidad$». Aunque el grupo «Auditores» puede editar y borrar archivos si se sienta en el propio servidor, cuando entren desde otro equipo por red solo deben poder mirar el contenido sin cambiar ni borrar nada.',
     contextNote:
-      'El permiso efectivo al acceder por red es siempre la INTERSECCIÓN (el mínimo) entre el permiso del recurso compartido y el permiso local NTFS.',
+      'No toques los permisos locales que ya tiene Auditores en el servidor; resuélvelo únicamente desde la configuración de red.',
     hint:
       'En la pestaña «Compartir (Red)», activa compartir carpeta con nombre «Contabilidad$» (el símbolo $ la oculta) y concede a Auditores únicamente permiso de red «Leer».',
     principals: [

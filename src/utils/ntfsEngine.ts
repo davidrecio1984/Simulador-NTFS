@@ -423,14 +423,20 @@ export function computeShareAllowedNtfsMask(
     for (const lvl of entry.deny) deniedLevels.add(lvl);
   }
 
-  if (deniedLevels.has('full')) {
+  if (deniedLevels.has('full') || deniedLevels.has('read')) {
     return new Set();
   }
 
   const result = new Set<NtfsPermissionKey>();
-  const effectiveFull = allowedLevels.has('full') && !deniedLevels.has('full');
+  const effectiveFull =
+    allowedLevels.has('full') &&
+    !deniedLevels.has('full') &&
+    !deniedLevels.has('change') &&
+    !deniedLevels.has('read');
   const effectiveChange =
-    (allowedLevels.has('change') || effectiveFull) && !deniedLevels.has('change');
+    (allowedLevels.has('change') || effectiveFull) &&
+    !deniedLevels.has('change') &&
+    !deniedLevels.has('read');
   const effectiveRead =
     (allowedLevels.has('read') || effectiveChange || effectiveFull) &&
     !deniedLevels.has('read');
@@ -563,7 +569,7 @@ export function simulateUserActions(
       if (accessMode === 'network' && !onThisFolder.shareFolder) {
         reason = 'La carpeta ni sus ancestros están compartidos en red.';
       } else if (accessMode === 'network' && localAllowed && !shareAllowed) {
-        reason = `Bloqueado por permiso de red en \\\\SERVIDOR\\${shareName}: el permiso NTFS local lo permite, pero el permiso de recurso compartido (Leer/Cambiar) es más restrictivo (intersección = mínimo).`;
+        reason = `Bloqueado por el permiso de red del recurso «${shareName}»: en NTFS local sí está permitido, pero el permiso de Compartir (Red) lo recorta (intersección Red ∩ NTFS).`;
       } else if (!localAllowed) {
         reason = missingLocalReason;
       }
@@ -642,8 +648,14 @@ export function simulateUserActions(
     evalAction(
       'delete_existing_file',
       'Eliminar un archivo existente',
-      'delete',
-      onFiles.effective.has('delete') ? onFiles : onThisFolder.effective.has('deleteSubfoldersAndFiles') ? onThisFolder : onFiles,
+      !onFiles.effective.has('delete') && onThisFolder.effective.has('deleteSubfoldersAndFiles')
+        ? 'deleteSubfoldersAndFiles'
+        : 'delete',
+      onFiles.effective.has('delete')
+        ? onFiles
+        : onThisFolder.effective.has('deleteSubfoldersAndFiles')
+          ? onThisFolder
+          : onFiles,
       'Puede eliminar archivos contenidos en esta carpeta.',
       'No tiene «Eliminar» sobre Archivos ni «Eliminar subcarpetas y archivos» sobre la carpeta.',
       'Eliminar (Archivos) o Eliminar subcarpetas y archivos (Carpeta)'

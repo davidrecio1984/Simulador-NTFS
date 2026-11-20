@@ -673,6 +673,14 @@ function makeBaseRoot(
         permissions: [...RX_PERMS],
         inheritedFrom: null,
       },
+      {
+        id: 'r-lead',
+        principalId: 'lead',
+        type: 'allow',
+        scope: 'this_folder_only',
+        permissions: [...RX_PERMS],
+        inheritedFrom: null,
+      },
     ],
     share: {
       shared: false,
@@ -759,7 +767,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Buzón ciego en ${theme.dropFolder} (${theme.sector})`,
+      title: `Entrega de archivos en ${theme.dropFolder} (${theme.sector})`,
       category: 'Buzón de entrega ciega',
       difficulty: 'Básico',
       sourcePractice: theme.sector,
@@ -768,8 +776,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'primary',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `«${theme.groupPrimary}» se conectan desde otros equipos a través de la red a ${targetPath}. Comparte el recurso en red (en C:\\${theme.rootFolder} o en ${theme.dropFolder}) y configura los permisos NTFS para que puedan depositar archivos nuevos, pero NO puedan abrirla para listar entregas ajenas ni leer, modificar o eliminar archivos existentes.`,
-      contextNote: `Para acceder desde otro equipo es obligatorio activar «Compartir (Red)» con permiso «Cambiar» y «Leer» para ${theme.groupPrimary}, además de los permisos NTFS.`,
+      enunciado: `El grupo «${theme.groupPrimary}» tiene que subir archivos desde sus ordenadores a ${targetPath}. Deben poder dejar su entrega ahí dentro, pero sin poder abrir la carpeta para curiosear qué han subido otros ni tocar o borrar los ficheros que ya estén guardados.`,
+      contextNote: `Se conectan desde otros equipos de ${theme.sector}; ten en cuenta tanto el acceso por red como los permisos de la carpeta.`,
       hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.dropFolder}), comparte la carpeta dando a ${theme.groupPrimary} «Cambiar» + «Leer». 2) En NTFS de ${theme.dropFolder}, aplica «Crear archivos / escribir datos» y «Permisos de lectura» en «Solo esta carpeta», sin «Mostrar carpeta / leer datos».`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -827,7 +835,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Gestión sin subcarpetas en ${theme.enunciadoFolder} (${theme.sector})`,
+      title: `Documentos vigentes en ${theme.enunciadoFolder} (${theme.sector})`,
       category: 'Carpetas sin historial',
       difficulty: 'Básico',
       sourcePractice: theme.sector,
@@ -836,8 +844,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'lead',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `Desde otro equipo de la red, «${theme.groupLead}» debe conectarse a ${targetPath} para mantener el documento vigente sin crear subcarpetas de historial. Comparte el recurso en red y configura UNA entrada NTFS para que pueda listar la carpeta, crear, modificar y eliminar archivos, pero NO crear subcarpetas ni borrar la carpeta ${theme.enunciadoFolder}.`,
-      contextNote: `Al trabajar desde otro equipo, ${theme.groupLead} necesita permiso de Red «Cambiar» (y «Leer») además de los permisos NTFS específicos.`,
+      enunciado: `«${theme.groupLead}» se conecta desde otro equipo a ${targetPath} para mantener al día los documentos vigentes. Necesita poder ver lo que hay, subir archivos nuevos, editarlos y borrarlos, pero sin crear subcarpetas de historial ni poder borrar la propia carpeta ${theme.enunciadoFolder}.`,
+      contextNote: `Configúralo usando una única regla nueva para ${theme.groupLead} en la carpeta y habilitando su acceso en red.`,
       hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.enunciadoFolder}), comparte para ${theme.groupLead} con «Cambiar» + «Leer». 2) En NTFS usa «Esta carpeta y archivos» con lectura, «Crear archivos / escribir datos», escribir atributos y «Eliminar subcarpetas y archivos» (sin «Crear carpetas / anexar datos» ni «Eliminar»).`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -902,7 +910,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Romper herencia y aislar raíz C:\\${theme.rootFolder}`,
+      title: `Acceso a la raíz C:\\${theme.rootFolder} sin entrar en subcarpetas`,
       category: 'Herencia y aislamiento',
       difficulty: 'Básico',
       sourcePractice: theme.sector,
@@ -911,8 +919,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'primary',
       testAccessMode: 'network',
       focusTab: 'security',
-      enunciado: `En ${rootPath} cuelga la subcarpeta ${theme.projectFolder}. «${theme.groupPrimary}» se conectará desde otro equipo a ${rootPath}. Debes: 1) Deshabilitar la herencia de ${rootPath} y eliminar «Usuarios» y «Usuarios autentificados», 2) Conceder a «${theme.groupPrimary}» Lectura y ejecución SOLO en ${rootPath} (sin heredar a ${theme.projectFolder}), y 3) Compartir ${rootPath} en red con «Leer» para «${theme.groupPrimary}».`,
-      contextNote: `Así proteges las subcarpetas de proyecto frente a la herencia de C:\\ y habilitas el acceso controlado desde otro equipo.`,
+      enunciado: `En ${rootPath} está guardada la carpeta ${theme.projectFolder}. «${theme.groupPrimary}» va a conectarse desde otros puestos a ${rootPath}, pero solo debe poder ver qué carpetas cuelgan de ahí sin poder entrar en ${theme.projectFolder}. Además, limpia los grupos genéricos que vienen heredados del disco C:\\ para que no se cuele nadie más.`,
+      contextNote: `Recuerda que se conectan por red desde otros ordenadores de ${theme.sector}.`,
       hint: `1) En Seguridad avanzada pulsa «Deshabilitar herencia» (Convertir), quita Usuarios y Usuarios autentificados, y añade a ${theme.groupPrimary} con Lectura y ejecución en «Solo esta carpeta». 2) En «Compartir (Red)» comparte ${rootPath} y concede «Leer» a ${theme.groupPrimary}.`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1000,7 +1008,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Supervisión solo lectura de ${theme.groupSupervisor} (${theme.sector})`,
+      title: `Consulta global para ${theme.groupSupervisor} (${theme.sector})`,
       category: 'Herencia y aislamiento',
       difficulty: 'Básico',
       sourcePractice: theme.sector,
@@ -1009,8 +1017,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'supervisor',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `«${theme.groupSupervisor}» se conectará por red desde otro equipo a ${rootPath}. Configura «Compartir (Red)» y una entrada NTFS para que pueda leer y ejecutar todo el contenido de ${rootPath} y cualquier subcarpeta actual o futura (como ${theme.projectFolder}), sin poder crear, editar ni borrar nada.`,
-      contextNote: `Al compartir la carpeta raíz en red con «Leer» y propagar NTFS «Lectura y ejecución» a toda la jerarquía, cualquier nueva subcarpeta quedará accesible en solo lectura.`,
+      enunciado: `Desde otros equipos de la red, «${theme.groupSupervisor}» necesita revisar todo lo que hay dentro de ${rootPath} y cualquier carpeta que exista o se cree en el futuro (como ${theme.projectFolder}). Solo es para consultar contenido y abrir archivos, sin posibilidad de crear, cambiar ni borrar nada.`,
+      contextNote: `Lo que configures en ${rootPath} debe aplicarse también a todo lo que cuelgue por debajo.`,
       hint: `1) En «Compartir (Red)» de ${rootPath}, activa compartir y da «Leer» a ${theme.groupSupervisor}. 2) En NTFS añade a ${theme.groupSupervisor} con ámbito «Esta carpeta, subcarpetas y archivos» y Lectura y ejecución.`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1053,7 +1061,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Editar archivos existentes sin crear ni borrar en ${theme.projectFolder}`,
+      title: `Editar ficheros existentes sin crear ni borrar en ${theme.projectFolder}`,
       category: 'Permisos dobles',
       difficulty: 'Avanzado',
       sourcePractice: theme.sector,
@@ -1062,8 +1070,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'primary',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `Desde otro equipo, «${theme.groupPrimary}» accede por red a ${targetPath}. Deben poder navegar por la carpeta y subcarpetas, leer todo y MODIFICAR el contenido de archivos ya existentes; pero NO deben poder crear archivos nuevos, crear subcarpetas ni borrar archivos o carpetas. Configura «Compartir (Red)» y NTFS.`,
-      contextNote: `Necesitas compartir con «Cambiar» y «Leer» en Red para permitir guardar cambios remotamente, y separar dos ámbitos NTFS para aprovechar los permisos dobles.`,
+      enunciado: `«${theme.groupPrimary}» trabaja desde otros puestos conectados a ${targetPath}. Tienen que poder moverse por la carpeta y sus subcarpetas, leer los documentos y modificar el contenido de los archivos que ya existen; pero no pueden crear archivos nuevos, ni abrir subcarpetas nuevas, ni borrar nada.`,
+      contextNote: `Acceden por red desde otros equipos. Fíjate en cómo cambian los permisos según se apliquen a carpetas o a archivos.`,
       hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.projectFolder}), concede a ${theme.groupPrimary} «Cambiar» + «Leer». 2) En NTFS: Entrada 1 «Esta carpeta y subcarpetas» solo Lectura y ejecución. Entrada 2 «Solo archivos» con Lectura + «Crear archivos / escribir datos» (+ anexar/escribir atributos), sin «Eliminar».`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1127,7 +1135,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Control de contenido sin borrar ${theme.projectFolder} (${theme.sector})`,
+      title: `Administrar ${theme.projectFolder} sin poder borrarla (${theme.sector})`,
       category: 'Protección de carpeta raíz',
       difficulty: 'Intermedio',
       sourcePractice: theme.sector,
@@ -1136,8 +1144,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'lead',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `«${theme.groupLead}» administra ${targetPath} remotamente desde otro equipo. Debe poder controlar todo el contenido interno por red (crear y borrar subcarpetas y archivos, cambiar permisos NTFS y tomar posesión), pero NO debe poder eliminar ni renombrar la propia carpeta ${theme.projectFolder}. Configura «Compartir (Red)» y NTFS.`,
-      contextNote: `Recuerda dos claves: en NTFS «Control total» permitiría borrar la carpeta raíz; y en «Compartir (Red)» hace falta «Control total» para poder cambiar permisos y tomar posesión por red.`,
+      enunciado: `«${theme.groupLead}» gestiona ${targetPath} a distancia desde otro ordenador. Debe tener mano libre sobre todo lo que hay dentro —crear y borrar archivos o subcarpetas, cambiar permisos y hacerse propietario—, pero no puede eliminar ni cambiar el nombre de la propia carpeta ${theme.projectFolder}.`,
+      contextNote: `Al trabajar a distancia por red, comprueba qué límite impone la forma de compartir frente a los permisos de seguridad.`,
       hint: `1) En «Compartir (Red)» (de C:\\${theme.rootFolder} o ${theme.projectFolder}) concede «Control total» a ${theme.groupLead}. 2) En NTFS selecciona «Esta carpeta, subcarpetas y archivos» y marca todos los permisos avanzados EXCEPTO «Control total» y «Eliminar».`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1193,7 +1201,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Entrega en raíz y consulta de archivo en ${theme.archiveFolder}`,
+      title: `Subidas en raíz y consulta en ${theme.archiveFolder}`,
       category: 'Entrega y consulta',
       difficulty: 'Avanzado',
       sourcePractice: theme.sector,
@@ -1202,8 +1210,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'primary',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `«${theme.groupPrimary}» se conectan por red a ${targetPath}. Deben poder ver la carpeta y subir archivos nuevos en la raíz ${theme.archiveFolder}, y además leer los elementos que ${theme.groupLead} archive en subcarpetas (${theme.sampleSubfolder}). NO deben poder modificar ni eliminar archivos existentes, ni crear subcarpetas. Configura «Compartir (Red)» y NTFS.`,
-      contextNote: `Requiere «Cambiar» + «Leer» en Compartir (Red) para poder subir archivos por red, y dos entradas NTFS con distinto «Se aplica a:».`,
+      enunciado: `«${theme.groupPrimary}» accede desde otros equipos a ${targetPath}. Ahí necesitan poder entrar, dejar archivos nuevos en la carpeta principal ${theme.archiveFolder} y leer los documentos que ${theme.groupLead} archive en subcarpetas como ${theme.sampleSubfolder}. No pueden modificar archivos ya subidos, ni borrar nada, ni crear subcarpetas.`,
+      contextNote: `Ten en cuenta el acceso por red desde otros ordenadores y separa bien qué se permite en la raíz frente a las subcarpetas y archivos.`,
       hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.archiveFolder}) da «Cambiar» + «Leer» a ${theme.groupPrimary}. 2) En NTFS: Entrada 1 «Solo esta carpeta» con Lectura y ejecución + «Crear archivos / escribir datos». Entrada 2 «Esta carpeta, subcarpetas y archivos» con solo Lectura y ejecución.`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1263,7 +1271,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Recurso oculto ${shareTarget} limitado por Red (${theme.sector})`,
+      title: `Carpeta oculta ${shareTarget} en red (${theme.sector})`,
       category: 'Intersección Red y NTFS',
       difficulty: 'Intermedio',
       sourcePractice: theme.sector,
@@ -1272,8 +1280,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'supervisor',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `La carpeta ${targetPath} ya concede localmente NTFS «Modificar» a «${theme.groupSupervisor}». Compártela en red de forma OCULTA con el nombre exacto «${shareTarget}», pero restringiendo su permiso en red para que al conectar desde otro equipo solo puedan LEER (sin editar ni eliminar).`,
-      contextNote: `No modifiques el permiso local NTFS; aplica la regla de intersección Red ∩ NTFS = mínimo.`,
+      enunciado: `La carpeta ${targetPath} debe publicarse en red de manera oculta usando el nombre «${shareTarget}». Aunque en el propio equipo «${theme.groupSupervisor}» puede editar y borrar archivos ahí dentro, cuando se conecte desde otro ordenador por red solo debe poder consultar el contenido sin cambiar ni eliminar nada.`,
+      contextNote: `Mantén intactos los permisos locales actuales y resuélvelo desde la configuración de red.`,
       hint: `En «Compartir (Red)», activa compartir con nombre «${shareTarget}» y agrega a ${theme.groupSupervisor} marcando únicamente «Leer».`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1329,7 +1337,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Limitar administración de ACL por red en ${theme.projectFolder}`,
+      title: `Acceso remoto limitado en ${theme.projectFolder}`,
       category: 'Intersección Red y NTFS',
       difficulty: 'Intermedio',
       sourcePractice: theme.sector,
@@ -1338,8 +1346,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'lead',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `«${theme.groupLead}» tiene localmente NTFS Control Total en ${targetPath}. Sin embargo, cuando se conecte por red al recurso compartido «${theme.projectFolder}», debe poder leer, crear, modificar y eliminar contenido, pero NO debe poder cambiar permisos NTFS ni tomar posesión remotamente. Configura la pestaña Compartir (Red).`,
-      contextNote: `El permiso de red «Cambiar» permite modificar/borrar objetos, pero bloquea «Cambiar permisos» y «Tomar posesión» a través de la red.`,
+      enunciado: `En local, «${theme.groupLead}» manda por completo sobre ${targetPath}. Sin embargo, cuando se conecte desde otro equipo al recurso compartido «${theme.projectFolder}», queremos que pueda leer, añadir, editar y borrar contenido, pero sin poder tocar los permisos ni cambiar el propietario a distancia.`,
+      contextNote: `No modifiques los permisos locales que ya tiene; controla el límite desde el acceso compartido en red.`,
       hint: `Comparte ${theme.projectFolder} y asigna a ${theme.groupLead} permiso de red «Cambiar» (y «Leer»), dejando desmarcado «Control total» en Red.`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1374,6 +1382,11 @@ const ARCHETYPES: ArchetypeBuilder[] = [
           issues.push({ severity: 'error', title: 'Recurso no compartido correctamente', detail: `Comparte la carpeta con el nombre «${theme.projectFolder}».` });
         }
         const net = computeEffectivePermissions('target', 'lead', 'files', 'network', folders, principals);
+        if (net.local.has('changePermissions') && net.local.has('takeOwnership')) {
+          issues.push({ severity: 'success', title: 'NTFS local intacto', detail: 'Se conserva el Control total en local.' });
+        } else {
+          issues.push({ severity: 'error', title: 'Se alteró el permiso local NTFS', detail: `Mantén el Control total local de ${theme.groupLead} y aplica la restricción únicamente en Compartir (Red).` });
+        }
         if (net.effective.has('createFilesWriteData') && net.effective.has('delete') && !net.effective.has('changePermissions') && !net.effective.has('takeOwnership')) {
           issues.push({ severity: 'success', title: 'Intersección Red (Cambiar) ∩ NTFS (Control total)', detail: 'Puede trabajar por red pero sin administrar permisos ni tomar posesión remotamente.' });
         } else {
@@ -1390,7 +1403,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Solo anexar datos en registros de ${theme.logFolder} (${theme.sector})`,
+      title: `Añadir líneas al final de los logs en ${theme.logFolder} (${theme.sector})`,
       category: 'Permisos dobles',
       difficulty: 'Avanzado',
       sourcePractice: theme.sector,
@@ -1399,8 +1412,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'primary',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `En ${targetPath} se guardan ficheros de registro (${theme.sampleLog}). «${theme.groupPrimary}» se conectan por red desde otro equipo y deben poder entrar en la carpeta, leer los logs y AÑADIR nuevas líneas al final de los archivos existentes (anexar datos), pero NO deben poder sobrescribir datos previos, crear archivos/subcarpetas ni eliminar nada. Configura «Compartir (Red)» y NTFS.`,
-      contextNote: `Necesitas compartir con «Cambiar» y «Leer» para escribir por red, y usar el segundo permiso doble NTFS: «Crear carpetas / anexar datos» significa «Anexar datos» en «Solo archivos».`,
+      enunciado: `En ${targetPath} se guardan ficheros de registro como ${theme.sampleLog}. «${theme.groupPrimary}» se conecta por red desde otro equipo y tiene que poder entrar, leer los registros y añadir nuevas líneas al final de los archivos que ya hay; pero sin poder machacar lo que ya estaba escrito, ni crear archivos o subcarpetas nuevos, ni borrar nada.`,
+      contextNote: `Combina el acceso por red con los permisos adecuados según afecten a la carpeta o a los archivos.`,
       hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.logFolder}), concede «Cambiar» + «Leer» a ${theme.groupPrimary}. 2) En NTFS: Entrada 1 «Solo esta carpeta» con Lectura y ejecución. Entrada 2 «Solo archivos» con Lectura + «Crear carpetas / anexar datos», SIN «Crear archivos / escribir datos» ni «Eliminar».`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1458,7 +1471,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Ejecutar herramientas sin leer código en ${theme.scriptFolder}`,
+      title: `Ejecutar programas sin ver la carpeta ${theme.scriptFolder}`,
       category: 'Ejecución y Denegar',
       difficulty: 'Intermedio',
       sourcePractice: theme.sector,
@@ -1467,8 +1480,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'primary',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `En ${targetPath} reside ${theme.sampleScript}. «${theme.groupPrimary}» se conectan por red desde otro equipo y deben poder atravesar la carpeta y EJECUTAR los programas, pero NO poder listar la carpeta ni leer/copiar el contenido de los archivos ni modificar nada. Configura «Compartir (Red)» y NTFS.`,
-      contextNote: `En Red basta con «Leer» (que incluye atravesar/ejecutar en el recurso compartido) y la intersección con NTFS bloquea listar o leer datos.`,
+      enunciado: `En ${targetPath} está guardado el programa ${theme.sampleScript}. «${theme.groupPrimary}» se conecta desde otro equipo y necesita poder ejecutar esa herramienta sabiendo su ruta, pero sin poder listar qué archivos hay en la carpeta, ni abrir o copiar el contenido del fichero, ni tocar nada.`,
+      contextNote: `Piensa en la diferencia entre poder lanzar un ejecutable y poder leerlo o ver el listado de la carpeta.`,
       hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.scriptFolder}), concede «Leer» a ${theme.groupPrimary}. 2) En NTFS aplica a «Esta carpeta y archivos» únicamente «Atravesar carpeta / ejecutar archivo» + lectura de atributos/permisos, SIN «Mostrar carpeta / leer datos».`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1524,7 +1537,7 @@ const ARCHETYPES: ArchetypeBuilder[] = [
     return {
       id: `bank-${seqNum}`,
       number: seqNum,
-      title: `Prioridad de Denegar para ${theme.groupRestricted} (${theme.sector})`,
+      title: `Restricción para ${theme.groupRestricted} en ${theme.projectFolder} (${theme.sector})`,
       category: 'Ejecución y Denegar',
       difficulty: 'Intermedio',
       sourcePractice: theme.sector,
@@ -1533,8 +1546,8 @@ const ARCHETYPES: ArchetypeBuilder[] = [
       targetPrincipalId: 'restricted',
       testAccessMode: 'network',
       focusTab: 'share',
-      enunciado: `Desde otro equipo, «${theme.groupPrimary}» accede por red a ${targetPath} donde ya tiene NTFS Modificar. Comparte la carpeta en red para «${theme.groupPrimary}» con «Cambiar» y «Leer», pero configura NTFS para que el subgrupo «${theme.groupRestricted}» (miembro de ${theme.groupPrimary}) conserve la lectura y tenga DENEGADA explícitamente la escritura/creación y la eliminación.`,
-      contextNote: `Al compartir para ${theme.groupPrimary} con Cambiar, ${theme.groupRestricted} también hereda ese permiso de red, por lo que la entrada NTFS «Denegar» es la que anula la escritura y borrado.`,
+      enunciado: `«${theme.groupPrimary}» se conecta desde otros equipos a ${targetPath}, donde ya puede leer, editar y borrar contenido. Sin embargo, los miembros del subgrupo «${theme.groupRestricted}» (que pertenecen a ${theme.groupPrimary}) solo deben poder leer cuando entren por red, teniendo bloqueado crear, modificar o eliminar nada.`,
+      contextNote: `No quites el acceso al grupo principal ${theme.groupPrimary}; añade la restricción para ${theme.groupRestricted} y habilita el acceso en red.`,
       hint: `1) En «Compartir (Red)» (en C:\\${theme.rootFolder} o ${theme.projectFolder}) concede «Cambiar» + «Leer» a ${theme.groupPrimary}. 2) En NTFS conserva a ${theme.groupPrimary} y añade una entrada «Denegar» para ${theme.groupRestricted} en «Esta carpeta, subcarpetas y archivos» marcando escritura, creación y eliminación.`,
       principals: makePrincipals(theme),
       initialFolders: [
@@ -1577,10 +1590,10 @@ const ARCHETYPES: ArchetypeBuilder[] = [
           issues.push({ severity: 'error', title: `Se modificó el acceso de ${theme.groupPrimary}`, detail: `Conserva la entrada NTFS Permitir Modificar de ${theme.groupPrimary}.` });
         }
 
-        if (rFolder.effective.has('listRead') && rFiles.effective.has('listRead')) {
-          issues.push({ severity: 'success', title: `Lectura por red preservada para ${theme.groupRestricted}`, detail: 'Pueden seguir leyendo la carpeta y archivos.' });
+        if (rFolder.effective.has('traverse') && rFolder.effective.has('listRead') && rFiles.effective.has('listRead')) {
+          issues.push({ severity: 'success', title: `Lectura por red preservada para ${theme.groupRestricted}`, detail: 'Pueden seguir entrando y leyendo la carpeta y archivos.' });
         } else {
-          issues.push({ severity: 'error', title: `Se bloqueó también la lectura de ${theme.groupRestricted}`, detail: 'No marques Control total ni permisos de lectura en la regla Denegar.' });
+          issues.push({ severity: 'error', title: `Se bloqueó también la lectura de ${theme.groupRestricted}`, detail: 'No marques Control total ni permisos de lectura o atravesar en la regla Denegar.' });
         }
 
         if (!rFolder.local.has('createFilesWriteData') && !rFiles.local.has('createFilesWriteData') && !rFolder.local.has('createFoldersAppendData') && !rFiles.local.has('delete') && !rFolder.effective.has('createFilesWriteData') && !rFiles.effective.has('delete')) {
